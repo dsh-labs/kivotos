@@ -2,6 +2,27 @@
 
 CI publishes the section that matches a pushed `v<version>` tag as the description of its GitHub Release. Write the section before tagging.
 
+## v0.6.1
+
+### Highlights
+
+- The Restart dsh dialog lines up. Its own stylesheet was only ever rendered by the restarting overlay and the back-online notice, so the dialog's empty-state line, its task list and its buttons row fell back to no padding: the line started at the dialog's edge while the title and description were indented. The dialog now renders that stylesheet itself and every line — title, description, empty state, running tasks, buttons — sits in the dialog's body and foot on one 24 px grid.
+- The dialog fits a phone. Its width is bounded by the viewport, its height by the dynamic viewport with the safe-area insets respected, the title wraps instead of clipping, the buttons share one row (each at least 44 px tall) and the close control keeps a 44 px target. The desktop app's dialog and the phone layout use the same component, so both get it.
+
+### Fixes
+
+- Restart dialog: empty-state text and buttons were flush with the dialog's left edge and had no gap to the body (0.6.0).
+- Restart dialog: content could exceed a phone's viewport height with the buttons row unreachable; it now stays inside it.
+
+### Compatibility
+
+- DeepSeek Harness `>=0.2.1-rc.5 <0.3.0-0`. Presentation only: no endpoint, protocol, config or relay change. Colours come from the user's dsh theme and are untouched.
+
+### 中文
+
+- 「重启 dsh」对话框对齐了。该对话框自身从不渲染重启样式表（只有「正在重启」遮罩和「已恢复在线」提示会渲染），所以空状态行、任务列表和按钮行都没有内边距：文字顶在对话框左边缘，而标题和说明是缩进的。现在对话框自己渲染样式表，标题、说明、空状态、运行中的任务和按钮全部落在对话框 body / foot 的同一套 24 px 网格上。
+- 对话框适配手机：宽度受视口限制，高度受动态视口限制并避开安全区，标题换行而不被裁切，按钮同处一行且高度不小于 44 px，关闭按钮保持 44 px 触达面积。桌面应用与手机布局用同一组件，两边同时生效。
+
 ## v0.6.0
 
 ### Highlights
