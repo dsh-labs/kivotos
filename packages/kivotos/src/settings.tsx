@@ -398,6 +398,17 @@ export const SETTINGS_CSS = `
 .kivotos-dialog-body{display:flex;flex-direction:column;gap:16px;min-width:0;padding:0 24px}
 .kivotos-dialog-foot{display:flex;justify-content:flex-end;gap:8px;padding:0 24px}
 .kivotos-dialog-foot .kivotos-btn[data-kind="outline"]{min-width:72px}
+@media (max-width:520px){
+.kivotos-dialog{width:min(92vw,440px);max-height:calc(100dvh - 24px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));padding-bottom:calc(16px + env(safe-area-inset-bottom,0px));scroll-padding-bottom:calc(16px + env(safe-area-inset-bottom,0px))}
+.kivotos-dialog[open]{gap:16px}
+.kivotos-dialog-head{padding:18px 12px 0 20px}
+.kivotos-dialog-title{font-size:15px;line-height:22px;overflow-wrap:anywhere}
+.kivotos-dialog-desc{padding:0 20px}
+.kivotos-dialog-body{padding:0 20px;gap:12px}
+.kivotos-dialog-foot{flex-wrap:wrap;padding:0 20px;gap:8px}
+.kivotos-dialog-foot .kivotos-btn{flex:1 1 40%;min-width:0;min-height:44px}
+.kivotos-dialog-head .kivotos-btn[data-kind="icon"]{width:44px;height:44px;flex:none}
+}
 .kivotos-invite{display:grid;grid-template-columns:152px minmax(0,1fr);column-gap:16px;align-items:center}
 .kivotos-qr{display:block;box-sizing:border-box;width:152px;height:152px;padding:8px;border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);background:#fff}
 .kivotos-pair-qr{display:block;box-sizing:border-box;width:min(100%,232px);height:auto;margin:0 auto;padding:10px;border-radius:var(--dsw-radius-md);background:#fff}

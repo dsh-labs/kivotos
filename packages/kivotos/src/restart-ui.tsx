@@ -77,11 +77,11 @@ export const RESTART_EN: Record<keyof typeof RESTART_ZH, string> = {
 };
 
 export const RESTART_CSS = `
-.kivotos-restart-list{margin:0;padding:0 24px 0 42px;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:20px}
-.kivotos-restart-note{margin:0;padding:0 24px;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:20px}
+.kivotos-restart-list{margin:0;padding:0 0 0 18px;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:20px}
+.kivotos-restart-note{margin:0;padding:0;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:20px}
 .kivotos-restart-note[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary)}
 .kivotos-restart-note[data-tone="error"]{color:var(--dsw-alias-state-error-primary)}
-.kivotos-restart-foot{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;padding:0 24px}
+.kivotos-restart-note+.kivotos-restart-list{margin-top:4px}
 .kivotos-restart-cover{position:fixed;inset:0;z-index:1200;display:grid;place-items:center;background:var(--dsw-alias-bg-mask-1)}
 .kivotos-restart-card{box-sizing:border-box;width:min(92vw,400px);padding:24px;border-radius:var(--dsw-radius-panel);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-elevation-prominent);font-size:14px;line-height:22px;text-align:center}
 .kivotos-restart-card p{margin:8px 0 0;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:20px;overflow-wrap:anywhere}
@@ -223,17 +223,20 @@ export function RestartDialog({
   const busy = status === null ? 0 : status.busy.sessions.length + status.busy.jobs.length;
   return (
     <Dialog title={t("restart.title", { name })} t={t} onClose={onClose}>
+      <style>{RESTART_CSS}</style>
       <p className="kivotos-dialog-desc">{t("restart.desc")}</p>
-      {status === null && error === null ? (
-        <p className="kivotos-restart-note">{t("restart.loading")}</p>
-      ) : null}
-      {status === null ? null : <RestartFacts status={status} t={t} />}
-      {error !== null ? (
-        <p className="kivotos-restart-note" data-tone="error">
-          {t("restart.failedRequest", { error })}
-        </p>
-      ) : null}
-      <div className="kivotos-restart-foot">
+      <div className="kivotos-dialog-body">
+        {status === null && error === null ? (
+          <p className="kivotos-restart-note">{t("restart.loading")}</p>
+        ) : null}
+        {status === null ? null : <RestartFacts status={status} t={t} />}
+        {error !== null ? (
+          <p className="kivotos-restart-note" data-tone="error">
+            {t("restart.failedRequest", { error })}
+          </p>
+        ) : null}
+      </div>
+      <div className="kivotos-dialog-foot">
         <button type="button" className="kivotos-btn" data-autofocus="" onClick={closeDialog}>
           {status !== null && !status.supported ? t("restart.close") : t("restart.cancel")}
         </button>
