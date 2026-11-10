@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/Rinai-R/kivotos/packages/relay/wire"
+	"github.com/dsh-labs/kivotos/packages/relay/wire"
 )
 
 // Client calls the admin API of the relay serving a socket.

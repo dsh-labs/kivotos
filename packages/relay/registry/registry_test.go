@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Rinai-R/kivotos/packages/relay/registry"
-	"github.com/Rinai-R/kivotos/packages/relay/wire"
+	"github.com/dsh-labs/kivotos/packages/relay/registry"
+	"github.com/dsh-labs/kivotos/packages/relay/wire"
 )
 
 func newRegistration(t *testing.T) wire.Registration {

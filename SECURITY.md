@@ -4,7 +4,7 @@
 
 Please report privately through a GitHub security advisory, not in a public issue:
 
-https://github.com/Rinai-R/kivotos/security/advisories/new
+https://github.com/dsh-labs/kivotos/security/advisories/new
 
 Include the version, how the machines are connected (tailnet, relay, or both), and the steps that reproduce the problem.
 

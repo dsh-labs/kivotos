@@ -41,14 +41,14 @@ dsh plugin --profile web add kivotos
 
 ### 手机
 
-从[发布页](https://github.com/Rinai-R/kivotos/releases)下载 APK 安装。在电脑上打开 **机器 → 配对手机**，用 App 扫码。
+从[发布页](https://github.com/dsh-labs/kivotos/releases)下载 APK 安装。在电脑上打开 **机器 → 配对手机**，用 App 扫码。
 
 ### 中继
 
 在一台有公网地址的服务器上用 Docker Compose 运行中继：
 
 ```bash
-curl -O https://raw.githubusercontent.com/Rinai-R/kivotos/main/packages/relay/docker-compose.yml
+curl -O https://raw.githubusercontent.com/dsh-labs/kivotos/main/packages/relay/docker-compose.yml
 docker compose up -d
 ```
 

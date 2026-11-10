@@ -149,7 +149,7 @@ jobs:
           # GHCR shows the index annotations on the package page of a multi-platform image.
           DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
         with:
-          images: ghcr.io/rinai-r/kivotos-relay
+          images: ghcr.io/dsh-labs/kivotos-relay
           tags: |
             type=ref,event=branch
             type=sha,enable=${{ github.ref_type != 'tag' }}

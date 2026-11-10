@@ -42,16 +42,18 @@ Restart dsh. Your other machines appear under **Machines** at the bottom of the 
 
 ### Phone
 
-Install the APK from the [releases page](https://github.com/Rinai-R/kivotos/releases). On the computer, open **Machines → Pair phone** and scan the code in the app.
+Install the APK from the [releases page](https://github.com/dsh-labs/kivotos/releases). On the computer, open **Machines → Pair phone** and scan the code in the app.
 
 ### Relay
 
 Run the relay with Docker Compose on a server with a public address:
 
 ```bash
-curl -O https://raw.githubusercontent.com/Rinai-R/kivotos/main/packages/relay/docker-compose.yml
+curl -O https://raw.githubusercontent.com/dsh-labs/kivotos/main/packages/relay/docker-compose.yml
 docker compose up -d
 ```
+
+The image is `ghcr.io/dsh-labs/kivotos-relay`. It used to publish under the personal namespace: see [docs/relay-image-migration.md](docs/relay-image-migration.md) if you installed the relay before the project moved.
 
 On the first computer, open **Settings → Remote access → Own relay**, enter the relay's address, and create a network. Register it on the relay by running the command the page shows after `docker compose exec relay`. Other computers and phones join with the invite link or its QR code.
 

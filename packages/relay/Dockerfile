@@ -1,5 +1,5 @@
 # Pull the published image (linux/amd64 and linux/arm64):
-#   docker pull ghcr.io/rinai-r/kivotos-relay:latest
+#   docker pull ghcr.io/dsh-labs/kivotos-relay:latest
 # or build it from this directory:
 #   docker build -t kivotos-relay --build-arg VERSION=$(git describe --tags --always) .
 #
@@ -8,7 +8,7 @@
 # reverse proxy with TLS in front and set KIVOTOS_RELAY_BEHIND_PROXY=true.
 #   docker run -d --name kivotos-relay -p 127.0.0.1:7443:7443 \
 #     -e KIVOTOS_RELAY_BEHIND_PROXY=true -v kivotos-relay:/data \
-#     ghcr.io/rinai-r/kivotos-relay:latest
+#     ghcr.io/dsh-labs/kivotos-relay:latest
 #
 # Register a network through the running container, with the registration
 # Kivotos shows the computer that created the network:
@@ -25,7 +25,7 @@ COPY . .
 ARG VERSION=dev
 ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
-      -ldflags "-s -w -X github.com/Rinai-R/kivotos/packages/relay/cmd.version=${VERSION}" \
+      -ldflags "-s -w -X github.com/dsh-labs/kivotos/packages/relay/cmd.version=${VERSION}" \
       -o /out/kivotos-relay .
 
 FROM alpine:3.22
