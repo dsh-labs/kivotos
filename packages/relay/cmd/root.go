@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/Rinai-R/kivotos/packages/relay/config"
+	"github.com/dsh-labs/kivotos/packages/relay/config"
 )
 
 // version is set at build time with -ldflags "-X .../cmd.version=...".

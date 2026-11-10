@@ -16,10 +16,10 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/Rinai-R/kivotos/packages/relay/admission"
-	"github.com/Rinai-R/kivotos/packages/relay/registry"
-	"github.com/Rinai-R/kivotos/packages/relay/tunnel"
-	"github.com/Rinai-R/kivotos/packages/relay/wire"
+	"github.com/dsh-labs/kivotos/packages/relay/admission"
+	"github.com/dsh-labs/kivotos/packages/relay/registry"
+	"github.com/dsh-labs/kivotos/packages/relay/tunnel"
+	"github.com/dsh-labs/kivotos/packages/relay/wire"
 )
 
 // relay is a real relay on a loopback port, assembled as the serve command does.

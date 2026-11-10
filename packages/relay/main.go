@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/Rinai-R/kivotos/packages/relay/cmd"
+	"github.com/dsh-labs/kivotos/packages/relay/cmd"
 )
 
 func main() {

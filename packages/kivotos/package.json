@@ -10,9 +10,9 @@
     "remote",
     "tailscale"
   ],
-  "homepage": "https://github.com/Rinai-R/kivotos#readme",
+  "homepage": "https://github.com/dsh-labs/kivotos#readme",
   "bugs": {
-    "url": "https://github.com/Rinai-R/kivotos/issues"
+    "url": "https://github.com/dsh-labs/kivotos/issues"
   },
   "license": "Apache-2.0",
   "author": {
@@ -21,7 +21,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Rinai-R/kivotos.git",
+    "url": "git+https://github.com/dsh-labs/kivotos.git",
     "directory": "packages/kivotos"
   },
   "files": [

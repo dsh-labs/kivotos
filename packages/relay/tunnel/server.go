@@ -13,7 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/Rinai-R/kivotos/packages/relay/wire"
+	"github.com/dsh-labs/kivotos/packages/relay/wire"
 )
 
 // keepaliveInterval is how often the relay pings an open WebSocket, so

@@ -12,11 +12,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/Rinai-R/kivotos/packages/relay/admin"
-	"github.com/Rinai-R/kivotos/packages/relay/admission"
-	"github.com/Rinai-R/kivotos/packages/relay/config"
-	"github.com/Rinai-R/kivotos/packages/relay/registry"
-	"github.com/Rinai-R/kivotos/packages/relay/tunnel"
+	"github.com/dsh-labs/kivotos/packages/relay/admin"
+	"github.com/dsh-labs/kivotos/packages/relay/admission"
+	"github.com/dsh-labs/kivotos/packages/relay/config"
+	"github.com/dsh-labs/kivotos/packages/relay/registry"
+	"github.com/dsh-labs/kivotos/packages/relay/tunnel"
 )
 
 func newServeCmd(v *viper.Viper) *cobra.Command {

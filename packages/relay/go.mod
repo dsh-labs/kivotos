@@ -1,4 +1,4 @@
-module github.com/Rinai-R/kivotos/packages/relay
+module github.com/dsh-labs/kivotos/packages/relay
 
 go 1.25.0
 

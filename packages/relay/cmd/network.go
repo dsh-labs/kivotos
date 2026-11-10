@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/Rinai-R/kivotos/packages/relay/admin"
-	"github.com/Rinai-R/kivotos/packages/relay/wire"
+	"github.com/dsh-labs/kivotos/packages/relay/admin"
+	"github.com/dsh-labs/kivotos/packages/relay/wire"
 )
 
 // newNetworkCmd groups the commands that manage networks on a running relay.

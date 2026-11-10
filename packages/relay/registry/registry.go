@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Rinai-R/kivotos/packages/relay/wire"
+	"github.com/dsh-labs/kivotos/packages/relay/wire"
 )
 
 var (

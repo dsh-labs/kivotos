@@ -44,7 +44,7 @@ Kivotos has no UI of its own for sessions. It adds four things:
 - `packages/mobile/modules/kivotos-attention/.../Network.kt`, `WsStream.kt`, `RelayClient.kt`: the app's relay side; each relay connection is a `RelayClient.dial` session (Keystore-held node key, pinned node id, proofs).
 - `packages/mobile/modules/kivotos-attention/.../MachineProxy.kt`, `Http.kt`, `HttpCache.kt`, `Pieces.kt`, `Prefetch.kt`: the app's machine doors, its disk cache, batches put together from pieces, and pre-fetch. See "Phone cache" below.
 - `packages/mobile/modules/kivotos-attention/.../Links.kt`: the app's link probe (`probeLinks`) and the doors' route memory. `packages/mobile/src/LinksScreen.tsx`: the app's Connections screen; `packages/mobile/src/MachineSheet.tsx`: a machine's long-press sheet; `packages/mobile/src/StateDot.tsx`: the state dot of rows, link rows and chips.
-- `packages/relay/`: the relay server, a Go module (`github.com/Rinai-R/kivotos/packages/relay`). See "Relay" below.
+- `packages/relay/`: the relay server, a Go module (`github.com/dsh-labs/kivotos/packages/relay`). See "Relay" below.
 - `scripts/dev.mjs` (`npm run dev`): one command that builds the relay and starts it with two dsh instances, each with its own `DSH_HOME`, joined to one relay network; prints each UI URL and the invite. Relay-only, so it needs no Tailscale. See "Two-instance lab" below.
 - `scripts/install-hooks.mjs`: installs the lefthook pre-commit hook (run by `npm install`).
 - `CONTRIBUTING.md`: prerequisites, the build and test commands for all three packages, the lab, the commit and PR conventions, and the CI jobs a PR must pass.

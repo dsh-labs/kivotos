@@ -12,9 +12,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/Rinai-R/kivotos/packages/relay/registry"
-	"github.com/Rinai-R/kivotos/packages/relay/tunnel"
-	"github.com/Rinai-R/kivotos/packages/relay/wire"
+	"github.com/dsh-labs/kivotos/packages/relay/registry"
+	"github.com/dsh-labs/kivotos/packages/relay/tunnel"
+	"github.com/dsh-labs/kivotos/packages/relay/wire"
 )
 
 // Network is a registered network with its live state.

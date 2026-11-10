@@ -41,14 +41,14 @@ dsh를 다시 시작하면 다른 머신은 사이드바 하단의 **Machines**�
 
 ### 휴대폰
 
-[릴리스 페이지](https://github.com/Rinai-R/kivotos/releases)에서 APK를 설치합니다. 컴퓨터에서 **Machines → Pair phone**을 열고 앱으로 코드를 스캔합니다.
+[릴리스 페이지](https://github.com/dsh-labs/kivotos/releases)에서 APK를 설치합니다. 컴퓨터에서 **Machines → Pair phone**을 열고 앱으로 코드를 스캔합니다.
 
 ### 릴레이
 
 공인 주소가 있는 서버에서 Docker Compose로 릴레이를 실행합니다.
 
 ```bash
-curl -O https://raw.githubusercontent.com/Rinai-R/kivotos/main/packages/relay/docker-compose.yml
+curl -O https://raw.githubusercontent.com/dsh-labs/kivotos/main/packages/relay/docker-compose.yml
 docker compose up -d
 ```
 

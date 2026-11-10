@@ -25,7 +25,7 @@ COPY . .
 ARG VERSION=dev
 ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
-      -ldflags "-s -w -X github.com/Rinai-R/kivotos/packages/relay/cmd.version=${VERSION}" \
+      -ldflags "-s -w -X github.com/dsh-labs/kivotos/packages/relay/cmd.version=${VERSION}" \
       -o /out/kivotos-relay .
 
 FROM alpine:3.22
