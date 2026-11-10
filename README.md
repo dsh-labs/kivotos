@@ -53,6 +53,8 @@ curl -O https://raw.githubusercontent.com/dsh-labs/kivotos/main/packages/relay/d
 docker compose up -d
 ```
 
+The image is `ghcr.io/dsh-labs/kivotos-relay`. It used to publish under the personal namespace: see [docs/relay-image-migration.md](docs/relay-image-migration.md) if you installed the relay before the project moved.
+
 On the first computer, open **Settings → Remote access → Own relay**, enter the relay's address, and create a network. Register it on the relay by running the command the page shows after `docker compose exec relay`. Other computers and phones join with the invite link or its QR code.
 
 The session event stream (`/api/remote.mux`) is compressed with `permessage-deflate` wherever both ends support it. With dsh 0.2.2 or newer the browser and dsh negotiate it end to end and Kivotos passes the frames through unchanged; with an older dsh Kivotos compresses the hop to the browser itself (off when it would not help). A 600 KB history snapshot costs about a third of its bytes on a throttled link. The extension is per message with context takeover off, and messages under 1 KB are left alone. Set `muxCompression: "off"` in the plugin config to disable it; the CPU cost is one deflate/inflate per large message on the computer serving the page.
