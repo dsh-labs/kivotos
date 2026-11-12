@@ -524,14 +524,15 @@ interface AppBridge {
  * simply no drawer to close.
  *
  * The page pushes what Back would close (`kivotos.layers`, `open`: `menu`,
- * `dialog`, `drawer` or null) once here and then after every change, one
- * frame after the DOM settles, so the app decides on Back without asking.
- * With a layer open the app runs `__kivotosClose`, which closes it and
- * answers whether it did. A layer stays `closing` until dsh has rendered it
- * gone, so a second Back before that closes the next layer instead of the
- * same one again (or toggling the drawer back open). `__kivotosBack` serves
- * an app from before the pushed state: it answers at once and closes in the
- * next task, since that app takes Back itself after 400 ms.
+ * `dialog`, `drawer` or null) once here and then after every change, from
+ * the MutationObserver callback itself (a microtask after the DOM changed),
+ * so the app decides on Back without asking. With a layer open the app runs
+ * `__kivotosClose`, which closes it and answers whether it did. A layer
+ * stays `closing` until dsh has rendered it gone, so a second Back before
+ * that closes the next layer instead of the same one again (or toggling the
+ * drawer back open). `__kivotosBack` serves an app from before the pushed
+ * state: it answers at once and closes in the next task, since that app
+ * takes Back itself after 400 ms; only one such close is pending at a time.
  * @param toggleSidebar - opens or closes the drawer.
  * @param collapsed - the drawer is closed; a change re-reports the state.
  */
@@ -541,9 +542,8 @@ function usePhoneBack(toggleSidebar: () => void, collapsed: boolean): void {
     const page = window as unknown as AppBridge;
     const closing = new Set<Element>();
     let posted: string | undefined;
-    let frame = 0;
+    let pending: ReturnType<typeof setTimeout> | undefined;
     const report = (): void => {
-      frame = 0;
       const open = backLayer(document, closing)?.open ?? null;
       const message = JSON.stringify({ type: "kivotos.layers", open });
       if (message === posted) return;
@@ -560,12 +560,13 @@ function usePhoneBack(toggleSidebar: () => void, collapsed: boolean): void {
     };
     const back = (): boolean => {
       if (backLayer(document, closing) === null) return false;
-      setTimeout(close, 0);
+      pending ??= setTimeout(() => {
+        pending = undefined;
+        close();
+      }, 0);
       return true;
     };
-    const observer = new MutationObserver(() => {
-      if (frame === 0) frame = requestAnimationFrame(report);
-    });
+    const observer = new MutationObserver(report);
     observer.observe(document.body, {
       subtree: true,
       childList: true,
@@ -577,7 +578,7 @@ function usePhoneBack(toggleSidebar: () => void, collapsed: boolean): void {
     page.__kivotosClose = close;
     return () => {
       observer.disconnect();
-      cancelAnimationFrame(frame);
+      clearTimeout(pending);
       if (page.__kivotosBack === back) delete page.__kivotosBack;
       if (page.__kivotosClose === close) delete page.__kivotosClose;
     };

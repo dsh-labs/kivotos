@@ -121,13 +121,36 @@ export type BackOpen = "menu" | "dialog" | "drawer" | null;
  * What a hardware Back on a page does, from the page's last `kivotos.layers`
  * (undefined: it never reported, an older Kivotos): close the layer, leave
  * the page (its WebView history, then the app), or ask the page with a
- * timeout ({@link backScript}).
+ * timeout ({@link backScript}). A page whose last close changed nothing
+ * ({@link closeOutcome} `stalled`: it hangs, or keeps reporting a layer it
+ * does not close) is left, so it can never keep Back.
  * @param open - the page's last report.
+ * @param stalled - the last close sent to this page changed nothing.
  * @returns the action.
  */
-export function backAction(open: BackOpen | undefined): "close" | "leave" | "ask" {
+export function backAction(
+  open: BackOpen | undefined,
+  stalled: boolean,
+): "close" | "leave" | "ask" {
   if (open === undefined) return "ask";
-  return open === null ? "leave" : "close";
+  return open === null || stalled ? "leave" : "close";
+}
+
+/** How long a close waits for the page's new state before it counts as stalled. */
+export const CLOSE_ANSWER_MS = 600;
+
+/**
+ * What a close comes to once {@link CLOSE_ANSWER_MS} has passed: `done` when
+ * the page reported another state; `leave` (this press leaves now) when it
+ * neither answered nor reported, a hung page; `stalled` (the next press
+ * leaves) when it answered but its state did not change.
+ * @param answered - the page answered the close (`kivotos.back`).
+ * @param changed - the page reported a state other than the one closed.
+ * @returns the outcome.
+ */
+export function closeOutcome(answered: boolean, changed: boolean): "done" | "leave" | "stalled" {
+  if (changed) return "done";
+  return answered ? "stalled" : "leave";
 }
 
 /** The machine a switcher row names, as the page's computer knows it (`MachineInfo`). */
@@ -150,16 +173,20 @@ export interface ListedMachine {
   route: "tailscale" | "relay" | null;
 }
 
+/** The page's Back messages. */
+export type BackMessage =
+  /** {@link backScript}'s and {@link closeScript}'s answer: whether the page spent the Back itself. */
+  | { type: "kivotos.back"; seq: number; handled: boolean }
+  /** What Back would close on the page, pushed on every change (`usePhoneBack`). */
+  | { type: "kivotos.layers"; open: BackOpen };
+
 /** A message the bridge or the plugin's switcher posts. */
 export type BridgeMessage =
   | { type: "session"; sessionId: string; path: string }
   | { type: "ready" }
   /** {@link PEERS_SCRIPT}'s answer; null when the computer did not list its machines. */
   | { type: "kivotos.peers"; machines: ListedMachine[] | null }
-  /** {@link backScript}'s and {@link closeScript}'s answer: whether the page spent the Back itself. */
-  | { type: "kivotos.back"; seq: number; handled: boolean }
-  /** What Back would close on the page, pushed on every change (`usePhoneBack`). */
-  | { type: "kivotos.layers"; open: BackOpen }
+  | BackMessage
   | {
       type: "kivotos.switch";
       machine: SwitchTarget;

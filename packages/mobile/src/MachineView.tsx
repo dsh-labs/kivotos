@@ -24,6 +24,9 @@ import {
   assignScript,
   backAction,
   backScript,
+  CLOSE_ANSWER_MS,
+  closeOutcome,
+  type BackMessage,
   type BackOpen,
   BRIDGE,
   closeScript,
@@ -141,10 +144,17 @@ export const MachineView = memo(function MachineView(props: Props) {
   const layers = useRef<BackOpen | undefined>(undefined);
   // The last hardware Back sent to the page, the timer that takes it when a
   // page that does not report its layers does not answer (`BACK_ANSWER_MS`),
-  // and the last close sent to one that does.
+  // and the last close sent to one that does: its timer (`CLOSE_ANSWER_MS`),
+  // the state it closed, whether the page answered it and whether the state
+  // changed since. `stalled`: a close changed nothing, so the next Back leaves.
   const backSeq = useRef(0);
   const backWait = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeSeq = useRef(0);
+  const closeWait = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeFrom = useRef<BackOpen | undefined>(undefined);
+  const closeAnswered = useRef(false);
+  const closeChanged = useRef(false);
+  const stalled = useRef(false);
   // A Session to open once dsh is up: the request the page was mounted with, or one that came while it loaded.
   const pending = useRef(open?.sessionId ?? null);
   const handled = useRef(open?.seq);
@@ -221,15 +231,28 @@ export const MachineView = memo(function MachineView(props: Props) {
       leave();
       return true;
     }
-    const action = backAction(layers.current);
+    const action = backAction(layers.current, stalled.current);
     if (action === "leave") {
+      stalled.current = false;
       leave();
       return true;
     }
     backSeq.current += 1;
     const seq = backSeq.current;
     if (action === "close") {
+      // No wait: the page reports its new state. A page that neither answers
+      // nor reports leaves now; one whose state does not change, next time.
       closeSeq.current = seq;
+      closeFrom.current = layers.current;
+      closeAnswered.current = false;
+      closeChanged.current = false;
+      clearTimeout(closeWait.current ?? undefined);
+      closeWait.current = setTimeout(() => {
+        closeWait.current = null;
+        const outcome = closeOutcome(closeAnswered.current, closeChanged.current);
+        if (outcome === "leave") leave();
+        else if (outcome === "stalled") stalled.current = true;
+      }, CLOSE_ANSWER_MS);
       web.current.injectJavaScript(closeScript(seq));
       return true;
     }
@@ -247,26 +270,43 @@ export const MachineView = memo(function MachineView(props: Props) {
       subscription.remove();
       if (backWait.current !== null) clearTimeout(backWait.current);
       backWait.current = null;
+      clearTimeout(closeWait.current ?? undefined);
+      closeWait.current = null;
     };
   }, [visible, onHardwareBack]);
+
+  // The page's Back state (`kivotos.layers`) and its answers to a Back (`kivotos.back`).
+  const onBackMessage = useCallback(
+    (message: BackMessage) => {
+      if (message.type === "kivotos.layers") {
+        if (message.open !== layers.current) stalled.current = false;
+        if (message.open !== closeFrom.current) closeChanged.current = true;
+        layers.current = message.open;
+        return;
+      }
+      // Only the answer to the last Back counts.
+      if (message.seq !== backSeq.current) return;
+      if (backWait.current !== null) {
+        clearTimeout(backWait.current);
+        backWait.current = null;
+      } else if (message.seq === closeSeq.current) closeAnswered.current = true;
+      else return;
+      // A close that found nothing left open (the report was a step behind): leave.
+      if (!message.handled) {
+        clearTimeout(closeWait.current ?? undefined);
+        closeWait.current = null;
+        leave();
+      }
+    },
+    [leave],
+  );
 
   const onMessage = useCallback(
     (event: WebViewMessageEvent) => {
       const message = parseBridgeMessage(event.nativeEvent.data);
       if (message === null) return;
-      if (message.type === "kivotos.layers") {
-        layers.current = message.open;
-        return;
-      }
-      if (message.type === "kivotos.back") {
-        // Only the answer to the last Back counts.
-        if (message.seq !== backSeq.current) return;
-        if (backWait.current !== null) {
-          clearTimeout(backWait.current);
-          backWait.current = null;
-        } else if (message.seq !== closeSeq.current) return;
-        // A close that found nothing left open (the report was a step behind): leave.
-        if (!message.handled) leave();
+      if (message.type === "kivotos.layers" || message.type === "kivotos.back") {
+        onBackMessage(message);
         return;
       }
       // A document that loaded without an error runs the bridge: the page is back.
@@ -299,7 +339,7 @@ export const MachineView = memo(function MachineView(props: Props) {
       session.current = message.sessionId;
       if (visible) onSession(viewKey, message.sessionId);
     },
-    [viewKey, visible, onSession, onSwitch, onReady, leave, reportReady],
+    [viewKey, visible, onSession, onSwitch, onReady, onBackMessage, reportReady],
   );
   const onNavigation = useCallback((state: WebViewNavigation) => {
     canGoBack.current = state.canGoBack;
@@ -309,6 +349,9 @@ export const MachineView = memo(function MachineView(props: Props) {
     ready.current = false;
     shell.current = false;
     layers.current = undefined;
+    stalled.current = false;
+    clearTimeout(closeWait.current ?? undefined);
+    closeWait.current = null;
     // A page mounted hidden (loaded ahead): its WebView may not have existed when the effect ran.
     applyVisible();
     onLoad(viewKey);

@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
-import { backAction, backScript, closeScript, parseBridgeMessage } from "../src/bridge.ts";
+import {
+  backAction,
+  backScript,
+  closeOutcome,
+  closeScript,
+  parseBridgeMessage,
+} from "../src/bridge.ts";
 
 /** Run `script` in a page whose `window[name]` is `fn`; returns what it posted. */
 function answer(fn: unknown, script = backScript(7), name = "__kivotosBack"): unknown {
@@ -72,9 +78,25 @@ test("kivotos.layers parses only the kinds Back knows", () => {
 });
 
 test("Back closes what the page reports open, leaves at once otherwise, and asks an older page", () => {
-  assert.equal(backAction("menu"), "close");
-  assert.equal(backAction("dialog"), "close");
-  assert.equal(backAction("drawer"), "close");
-  assert.equal(backAction(null), "leave");
-  assert.equal(backAction(undefined), "ask");
+  assert.equal(backAction("menu", false), "close");
+  assert.equal(backAction("dialog", false), "close");
+  assert.equal(backAction("drawer", false), "close");
+  assert.equal(backAction(null, false), "leave");
+  assert.equal(backAction(undefined, false), "ask");
+});
+
+test("a page whose close changed nothing is left on the next Back, open or not", () => {
+  for (const open of ["menu", "dialog", "drawer"] as const)
+    assert.equal(backAction(open, true), "leave");
+  assert.equal(backAction(null, true), "leave");
+  // An older page is still asked: it has its own timeout.
+  assert.equal(backAction(undefined, true), "ask");
+});
+
+test("a close leaves now when the page neither answered nor reported, and stalls when only answered", () => {
+  assert.equal(closeOutcome(false, false), "leave");
+  assert.equal(closeOutcome(true, false), "stalled");
+  assert.equal(closeOutcome(true, true), "done");
+  // A report of the new state is enough, answered or not.
+  assert.equal(closeOutcome(false, true), "done");
 });
