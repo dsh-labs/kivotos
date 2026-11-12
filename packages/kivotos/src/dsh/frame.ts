@@ -56,12 +56,14 @@ export const PARTS = {
   themeCube: suffix("themeCube"),
   /** A Session row in the sidebar tree; workspace folders carry aria-expanded. */
   treeItem: "[role=treeitem]",
-  /** The Settings panel's close button, in its header. */
+  /** A dialog's close button: the Settings panel's, in its header, and a dsh Modal's. */
   close: suffix("close"),
   /** An open dsh menu (account menu, row menus); it closes on a press outside it. */
   menu: "[role=menu]",
-  /** A dsh modal dialog, such as the preview notice, closed only by its own buttons. */
+  /** A dsh modal dialog: Settings, a confirmation, the preview notice, and the drawer. */
   modal: '[role=dialog][aria-modal="true"]',
+  /** SidebarRoot while it is the open drawer (it is a modal only then); closed by `toggleSidebar`. */
+  drawer: '[data-shortcut-modal="sidebar"]',
 } as const;
 
 const P = PARTS;
@@ -289,33 +291,66 @@ export function onSessionRowTap(onOpen: () => void): () => void {
 /** Kivotos' own machine switcher list (client.tsx), which closes like a dsh menu. */
 const SWITCHER_LIST = ".kivotos-machines-list";
 
+/** Every layer a phone Back may find open over the page. */
+const LAYERS = `${P.modal}, ${P.menu}, ${SWITCHER_LIST}`;
+
 /**
- * Spend a phone Back on the topmost layer dsh shows over the page, as a
- * native app's Back would: an open menu is dismissed (by a press outside it,
- * which is how dsh's menus and the switcher close); the Settings panel or a
- * modal dialog is closed by its own close button (`_close`, as dsh marks it
- * on both); a modal without one (the preview notice) keeps Back, like a
- * non-cancelable native dialog.
- * @param page - the page dsh rendered.
- * @returns whether Back was spent here; false leaves it to the caller.
+ * The layer a phone Back closes (`backLayer`), by how it closes:
+ * - `menu`: a dsh menu or the switcher, by a press outside it;
+ * - `dialog`: a modal dialog, the Settings panel included, by its own close
+ *   button (`_close`, as dsh marks it);
+ * - `drawer`: the open sidebar drawer, by the caller (`toggleSidebar`).
  */
-export function dismissTopLayer(page: Document): boolean {
-  if (page.querySelector(`${P.menu}, ${SWITCHER_LIST}`) !== null) {
-    const outside = page.querySelector(P.centerCol) ?? page.body;
-    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
-      const Event = type.startsWith("pointer") ? PointerEvent : MouseEvent;
-      outside.dispatchEvent(new Event(type, { bubbles: true, cancelable: true, composed: true }));
-    }
-    return true;
+export interface BackLayer {
+  readonly open: "menu" | "dialog" | "drawer";
+  readonly element: Element;
+}
+
+/**
+ * Find the topmost layer dsh shows over the page, for a phone Back to close,
+ * as a native app's Back would. The topmost is the last open menu, switcher
+ * list or modal dialog in document order (the order dsh's own modal stack
+ * uses). SidebarRoot is a modal only while it is the open drawer. A dialog
+ * without a close button on top (the preview notice) leaves nothing for Back
+ * to close: only its own buttons dismiss it.
+ * @param page - the page dsh rendered.
+ * @param closing - layers already closed whose closing dsh has not rendered
+ *   yet; they are skipped, and dropped once they are gone or no longer open.
+ * @returns the layer Back closes, or null when it has none to close.
+ */
+export function backLayer(page: Document, closing: Set<Element>): BackLayer | null {
+  for (const element of closing)
+    if (!element.isConnected || !element.matches(LAYERS)) closing.delete(element);
+  const layers = [...page.querySelectorAll(LAYERS)].filter((element) => !closing.has(element));
+  const top = layers.at(-1);
+  if (top === undefined) return null;
+  if (top.matches(P.drawer)) return { open: "drawer", element: top };
+  if (!top.matches(P.modal)) return { open: "menu", element: top };
+  return top.querySelector(`button${P.close}`) === null ? null : { open: "dialog", element: top };
+}
+
+/**
+ * Close a layer `backLayer` found: a menu by a press outside it (how dsh's
+ * menus and the switcher close), a dialog by its close button, the drawer by
+ * `closeDrawer`.
+ * @param page - the page dsh rendered.
+ * @param layer - what `backLayer` returned.
+ * @param closeDrawer - closes the drawer (`toggleSidebar`).
+ */
+export function closeLayer(page: Document, layer: BackLayer, closeDrawer: () => void): void {
+  if (layer.open === "drawer") {
+    closeDrawer();
+    return;
   }
-  const modals = page.querySelectorAll(P.modal);
-  const modal = modals.item(modals.length - 1);
-  const close =
-    modal === null
-      ? page.querySelector(`${P.settings} ${P.header} > button${P.close}`)
-      : modal.querySelector(`button${P.close}`);
-  if (close instanceof HTMLElement) close.click();
-  return modal !== null || close !== null;
+  if (layer.open === "dialog") {
+    layer.element.querySelector<HTMLElement>(`button${P.close}`)?.click();
+    return;
+  }
+  const outside = page.querySelector(P.centerCol) ?? page.body;
+  for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
+    const Event = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+    outside.dispatchEvent(new Event(type, { bubbles: true, cancelable: true, composed: true }));
+  }
 }
 
 /** The fields of a composer keydown the phone layout judges; `KeyboardEvent` satisfies it. */

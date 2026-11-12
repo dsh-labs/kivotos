@@ -43,7 +43,8 @@ import { sessionFileAddress } from "./dsh/files.ts";
 import { peerFileIntake } from "./dsh/peer-files.ts";
 import {
   APP_SAFE_AREA,
-  dismissTopLayer,
+  backLayer,
+  closeLayer,
   onSessionRowTap,
   PARTS,
   phoneStylesheet,
@@ -505,38 +506,83 @@ function openMachine(peer: string | null, machine?: MachineInfo): void {
 /** What the phone app's injected bridge adds to its pages (packages/mobile/src/bridge.ts). */
 interface AppBridge {
   __kivotosSwitch?: boolean;
-  /** What the app's hardware Back asks the page first (`usePhoneBack`). */
+  /** What an app before #61's pushed state asks on Back (`usePhoneBack`). */
   __kivotosBack?: () => boolean;
+  /** What the app runs on Back while the page reports a layer open (`usePhoneBack`). */
+  __kivotosClose?: () => boolean;
   ReactNativeWebView?: { postMessage(data: string): void };
 }
 
 /**
- * The phone app's hardware Back, inside dsh first, as a native app's stack:
- * a menu or Settings over the page goes first (`dismissTopLayer`), then the
- * conversation goes back to its Session list (the drawer opens). With the
- * Session list open the page has nothing left to go back to: it answers
- * false and the app shows its machine list. The app asks
- * `window.__kivotosBack` and falls back to its list when a page (an older
- * Kivotos) has none.
- * @param active - the drawer layout applies (phone width, frame as pinned).
- * @param collapsed - the drawer is closed.
+ * The phone app's hardware Back, the way Android treats one screen with
+ * things open over it: the topmost one closes (a menu or the switcher, a
+ * dialog with a close button, Settings, then the drawer; `backLayer`), and
+ * with nothing open the app leaves the page at once. Back never opens the
+ * drawer, and a dialog without a close button (the preview notice) does not
+ * keep it. Registered whenever the app hosts the page, at any width and
+ * whatever the phone-layout probe says: without the drawer layout there is
+ * simply no drawer to close.
+ *
+ * The page pushes what Back would close (`kivotos.layers`, `open`: `menu`,
+ * `dialog`, `drawer` or null) once here and then after every change, from
+ * the MutationObserver callback itself (a microtask after the DOM changed),
+ * so the app decides on Back without asking. With a layer open the app runs
+ * `__kivotosClose`, which closes it and answers whether it did. A layer
+ * stays `closing` until dsh has rendered it gone, so a second Back before
+ * that closes the next layer instead of the same one again (or toggling the
+ * drawer back open). `__kivotosBack` serves an app from before the pushed
+ * state: it answers at once and closes in the next task, since that app
+ * takes Back itself after 400 ms; only one such close is pending at a time.
  * @param toggleSidebar - opens or closes the drawer.
+ * @param collapsed - the drawer is closed; a change re-reports the state.
  */
-function usePhoneBack(active: boolean, collapsed: boolean, toggleSidebar: () => void): void {
+function usePhoneBack(toggleSidebar: () => void, collapsed: boolean): void {
   useEffect(() => {
-    if (!active) return undefined;
+    if (!IN_APP) return undefined;
     const page = window as unknown as AppBridge;
-    const back = (): boolean => {
-      if (dismissTopLayer(document)) return true;
-      if (!collapsed) return false;
-      toggleSidebar();
+    const closing = new Set<Element>();
+    let posted: string | undefined;
+    let pending: ReturnType<typeof setTimeout> | undefined;
+    const report = (): void => {
+      const open = backLayer(document, closing)?.open ?? null;
+      const message = JSON.stringify({ type: "kivotos.layers", open });
+      if (message === posted) return;
+      posted = message;
+      page.ReactNativeWebView?.postMessage(message);
+    };
+    const close = (): boolean => {
+      const layer = backLayer(document, closing);
+      if (layer === null) return false;
+      closing.add(layer.element);
+      closeLayer(document, layer, toggleSidebar);
+      report();
       return true;
     };
-    page.__kivotosBack = back;
-    return () => {
-      if (page.__kivotosBack === back) delete page.__kivotosBack;
+    const back = (): boolean => {
+      if (backLayer(document, closing) === null) return false;
+      pending ??= setTimeout(() => {
+        pending = undefined;
+        close();
+      }, 0);
+      return true;
     };
-  }, [active, collapsed, toggleSidebar]);
+    const observer = new MutationObserver(report);
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["aria-modal", "role"],
+    });
+    report();
+    page.__kivotosBack = back;
+    page.__kivotosClose = close;
+    return () => {
+      observer.disconnect();
+      clearTimeout(pending);
+      if (page.__kivotosBack === back) delete page.__kivotosBack;
+      if (page.__kivotosClose === close) delete page.__kivotosClose;
+    };
+  }, [toggleSidebar, collapsed]);
 }
 
 /**
@@ -1414,7 +1460,7 @@ function PhoneShell({ t, toggleSidebar }: Injected): ReactNode {
   // inside it pads 0; a phone's own browser pads the safe areas itself.
   const safeArea = IN_APP ? APP_SAFE_AREA : undefined;
   useCloseDrawerOnSelect(layout && phone && !collapsed, toggleSidebar);
-  usePhoneBack(layout && phone, collapsed, toggleSidebar);
+  usePhoneBack(toggleSidebar, collapsed);
   usePhoneComposerFocus(layout && phone);
   usePhoneComposerLineBreak(layout && phone);
   return (
