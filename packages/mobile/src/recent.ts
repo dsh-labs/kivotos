@@ -40,6 +40,14 @@ export function withPeer(recent: Recent, machine: string, peer: string): Recent 
   return { ...recent, peers: { ...recent.peers, [machine]: peers } };
 }
 
+/** @returns `recent` without `peer` among the peers switched to from the pages of row `machine`. */
+export function withoutPeer(recent: Recent, machine: string, peer: string): Recent {
+  const known = recent.peers[machine];
+  if (known === undefined || !known.includes(peer)) return recent;
+  const peers = known.filter((id) => id !== peer);
+  return { ...recent, peers: { ...recent.peers, [machine]: peers } };
+}
+
 /** @returns `recent` without the rows that are not in `ids` any more. */
 export function keepRows(recent: Recent, ids: ReadonlySet<string>): Recent {
   const entries = Object.entries(recent.peers);

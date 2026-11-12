@@ -3,7 +3,15 @@ import { test } from "node:test";
 import type { LinkState, MachineLink, PhoneProbe, Via } from "../../kivotos/src/machines.ts";
 import type { Machine } from "../modules/kivotos-attention/src/KivotosAttentionModule.ts";
 import type { ListedMachine, SwitchTarget } from "../src/bridge.ts";
-import { preloadTargets, switchTarget, type LiveView } from "../src/views.ts";
+import { withoutPeer, withPeer, NO_RECENT } from "../src/recent.ts";
+import {
+  mountFailover,
+  mountFallback,
+  preloadTargets,
+  showView,
+  switchTarget,
+  type LiveView,
+} from "../src/views.ts";
 
 /** The phone's row for the computer A whose page the switch starts from. */
 const A: Machine = { id: "lab-a", name: "lab-a", url: "http://slab-a:7380" };
@@ -13,10 +21,14 @@ const B: Machine = { id: "lab-b", name: "lab-b", url: "http://slab-b:7380" };
 const MOUNT = "node-b-mount";
 
 const target: SwitchTarget = { id: MOUNT, name: "lab-b", address: "slab-b:7380" };
+/** A lists B with A's own route to it over Tailscale. */
 const listedB: ListedMachine = {
   target: { id: MOUNT, name: "lab-b", address: "slab-b:7380" },
   online: true,
+  route: "tailscale",
 };
+/** A lists B, but A's own route to it is the relay. */
+const listedBRelay: ListedMachine = { ...listedB, route: "relay" };
 
 function link(via: Via, state: LinkState = "online"): MachineLink {
   return state === "unreachable" ? { via, state, reason: "timeout" } : { via, state };
@@ -50,6 +62,7 @@ function view(machine: Machine, peer: LiveView["peer"] = null): LiveView {
     generation: 1,
     door: "door",
     open: null,
+    fallback: null,
     preloaded: false,
   };
 }
@@ -75,7 +88,7 @@ test("goes through the page's computer when the phone's probe found no route", (
 });
 
 test("keeps the phone's own row when the page's computer does not list the target", () => {
-  for (const listed of [null, [], [{ ...listedB, online: false }]]) {
+  for (const listed of [null, [], [{ ...listedB, online: false, route: null }]]) {
     const to = switchTarget([A, B], relayOnlyProbe, view(A), target, listed);
     assert.deepEqual(to, { machine: B, peer: null }, `listed: ${JSON.stringify(listed)}`);
   }
@@ -155,7 +168,11 @@ test("loads ahead the target switched to lately first, at most PRELOAD_MAX", () 
     { id: "node-c-mount", name: "lab-c" },
     { id: "node-d-mount", name: "lab-d" },
   ];
-  const listed: ListedMachine[] = targets.map((each) => ({ target: each, online: true }));
+  const listed: ListedMachine[] = targets.map((each) => ({
+    target: each,
+    online: true,
+    route: "tailscale",
+  }));
   const from = view(A);
   const all = preloadTargets([A], directProbe, from, listed, []);
   assert.equal(all.length, 2);
@@ -165,4 +182,73 @@ test("loads ahead the target switched to lately first, at most PRELOAD_MAX", () 
   );
   const lately = preloadTargets([A], directProbe, from, listed, ["node-d-mount"]);
   assert.equal(lately[0]?.peer?.id, "node-d-mount");
+});
+
+test("uses the phone's own row when the page's computer reaches the target only over the relay", () => {
+  // The phone has its own row: the relay through A is no better, and adds a hop.
+  const to = switchTarget([A, B], relayOnlyProbe, view(A), target, [listedBRelay]);
+  assert.deepEqual(to, { machine: B, peer: null });
+  // A probe with no route to the row leaves only A's mount.
+  const noRow = switchTarget([A, B], noRouteProbe, view(A), target, [listedBRelay]);
+  assert.deepEqual(noRow, { machine: A, peer: { id: MOUNT, name: "lab-b" } });
+});
+
+test("goes through the page's computer when it reaches the target over Tailscale", () => {
+  const to = switchTarget([A, B], relayOnlyProbe, view(A), target, [listedB]);
+  assert.deepEqual(to, { machine: A, peer: { id: MOUNT, name: "lab-b" } });
+});
+
+test("goes through the page's computer over the relay when the phone has no row", () => {
+  const to = switchTarget([A], relayOnlyProbe, view(A), target, [listedBRelay]);
+  assert.deepEqual(to, { machine: A, peer: { id: MOUNT, name: "lab-b" } });
+});
+
+test("loads ahead by the same rule: the computer's mount only over its Tailscale link", () => {
+  const from = view(A);
+  // A lists B over the relay: the phone's own row.
+  assert.deepEqual(preloadTargets([A, B], relayOnlyProbe, from, [listedBRelay], []), [
+    { machine: B, peer: null },
+  ]);
+  // A lists B over Tailscale: A's mount.
+  assert.deepEqual(preloadTargets([A, B], relayOnlyProbe, from, [listedB], []), [
+    { machine: A, peer: { id: MOUNT, name: "lab-b" } },
+  ]);
+  // No row for B: A's mount, whichever its route.
+  for (const listed of [listedB, listedBRelay])
+    assert.deepEqual(preloadTargets([A], relayOnlyProbe, from, [listed], []), [
+      { machine: A, peer: { id: MOUNT, name: "lab-b" } },
+    ]);
+});
+
+test("a switch through the computer's mount keeps the phone's reachable row to fall back on", () => {
+  const mount = { machine: A, peer: { id: MOUNT, name: "lab-b" } };
+  assert.equal(mountFallback([A, B], relayOnlyProbe, mount, target), B.id);
+  // No row, or a row the phone's probe found no route to: nothing to fall back on.
+  assert.equal(mountFallback([A], relayOnlyProbe, mount, target), null);
+  assert.equal(mountFallback([A, B], noRouteProbe, mount, target), null);
+  // The phone's own row shown: no fallback.
+  assert.equal(mountFallback([A, B], relayOnlyProbe, { machine: B, peer: null }, target), null);
+});
+
+test("a failed mount on screen falls back on the phone's own row", () => {
+  const peer = { id: MOUNT, name: "lab-b" };
+  const views = showView([view(A)], A, peer, null, B.id);
+  const key = `${A.id}#${MOUNT}`;
+  const failover = mountFailover(views, [A, B], key, key);
+  assert.equal(failover?.row, B);
+  assert.equal(failover?.view.peer.id, MOUNT);
+  // Not on screen, the row since removed, or no fallback: the cover stays.
+  assert.equal(mountFailover(views, [A, B], key, A.id), null);
+  assert.equal(mountFailover(views, [A], key, key), null);
+  const plain = showView([view(A)], A, peer, null);
+  assert.equal(mountFailover(plain, [A, B], key, key), null);
+  // A row's own page never falls back.
+  assert.equal(mountFailover(views, [A, B], A.id, A.id), null);
+});
+
+test("a failed mount is forgotten among the recent switches of its computer", () => {
+  const recent = withPeer(withPeer(NO_RECENT, A.id, "node-c-mount"), A.id, MOUNT);
+  assert.deepEqual(withoutPeer(recent, A.id, MOUNT).peers[A.id], ["node-c-mount"]);
+  assert.equal(withoutPeer(recent, B.id, MOUNT), recent);
+  assert.equal(withoutPeer(recent, A.id, "node-x"), recent);
 });
