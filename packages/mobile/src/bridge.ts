@@ -114,6 +114,8 @@ export interface ListedMachine {
   target: SwitchTarget;
   /** The computer has a route to it now. */
   online: boolean;
+  /** The computer's link in use to it (its `MachineInfo.route`); null when none works. */
+  route: "tailscale" | "relay" | null;
 }
 
 /** A message the bridge or the plugin's switcher posts. */
@@ -194,7 +196,8 @@ function listedOf(value: unknown): ListedMachine[] {
   const address = optional(tailscale?.address);
   if (node !== undefined) target.node = node;
   if (address !== undefined) target.address = address;
-  return [{ target, online: typeof machine.route === "string" }];
+  const route = machine.route === "tailscale" || machine.route === "relay" ? machine.route : null;
+  return [{ target, online: typeof machine.route === "string", route }];
 }
 
 /** @returns the message, or null for anything else a page posts. */

@@ -22,11 +22,21 @@ import { MachineView } from "./src/MachineView";
 import { loadMachines, saveMachines } from "./src/machines";
 import { PairScanner } from "./src/PairScanner";
 import { usePreloader } from "./src/preload";
-import { keepRows, loadRecent, NO_RECENT, saveRecent, withPeer, type Recent } from "./src/recent";
+import {
+  keepRows,
+  loadRecent,
+  NO_RECENT,
+  saveRecent,
+  withoutPeer,
+  withPeer,
+  type Recent,
+} from "./src/recent";
 import { useStyles, type Palette } from "./src/theme";
 import {
   followMachines,
   keyOf,
+  mountFailover,
+  mountFallback,
   pathOf,
   preloadTargets,
   showView,
@@ -111,12 +121,21 @@ export default function App() {
     [remember],
   );
 
-  /** Show the page of a machine, or of a peer its computer mounts, loaded already when it is still alive. */
+  /**
+   * Show the page of a machine, or of a peer its computer mounts, loaded
+   * already when it is still alive; `fallback` is a peer page's
+   * `LiveView.fallback`.
+   */
   const show = useCallback(
-    (machine: Machine, peer: LiveView["peer"], open: OpenRequest | null) => {
+    (
+      machine: Machine,
+      peer: LiveView["peer"],
+      open: OpenRequest | null,
+      fallback: string | null = null,
+    ) => {
       // Until the page reports, no Session of the page left is on screen.
       Attention.setOnScreen(machine.id, "");
-      setViews((live) => showView(live, machine, peer, open));
+      setViews((live) => showView(live, machine, peer, open, fallback));
       setShown(keyOf(machine.id, peer));
       if (peer === null && recent.current.row !== machine.id)
         remember({ ...recent.current, row: machine.id });
@@ -211,7 +230,8 @@ export default function App() {
 
   /**
    * A page's switcher asked for another machine: show the phone's own row for
-   * it, else the page of it its computer mounts, both kept loaded.
+   * it, else the page of it its computer mounts, both kept loaded. A mount
+   * keeps the phone's own row for the target, if it has one, to fall back on.
    */
   const onSwitch = useCallback(
     (viewKey: string, target: SwitchTarget, sessionId: string | undefined) => {
@@ -227,7 +247,8 @@ export default function App() {
         openSeq.current += 1;
         open = { sessionId, seq: openSeq.current };
       }
-      show(to.machine, to.peer, open);
+      const fallback = mountFallback(machinesRef.current, probeRef.current, to, target);
+      show(to.machine, to.peer, open, fallback);
       if (target.id !== null) remember(withPeer(recent.current, from.machine, target.id));
       return true;
     },
@@ -259,14 +280,37 @@ export default function App() {
     listedRef.current.delete(viewKey);
   }, []);
 
-  /** A page did not load: one loaded ahead goes; the next switch to it loads it again. */
-  const onFailed = useCallback((viewKey: string) => {
-    setViews((live) =>
-      live.filter(
-        (view) => view.key !== viewKey || !view.preloaded || view.key === shownRef.current,
-      ),
-    );
-  }, []);
+  /**
+   * A page did not load. A switch shown through its computer's mount that the
+   * phone also has its own row for falls back on that row: the mount goes, and
+   * so do the computer's list and the recent switch that led there, so the next
+   * switch from its pages goes direct. Else one loaded ahead goes (the next
+   * switch to it loads it again), and the page on screen keeps its cover.
+   */
+  const onFailed = useCallback(
+    (viewKey: string) => {
+      const failover = mountFailover(
+        viewsRef.current,
+        machinesRef.current,
+        viewKey,
+        shownRef.current,
+      );
+      if (failover !== null) {
+        const { view, row } = failover;
+        listedRef.current.delete(view.machine);
+        remember(withoutPeer(recent.current, view.machine, view.peer.id));
+        setViews((live) => live.filter((other) => other.key !== viewKey));
+        show(row, null, view.open);
+        return;
+      }
+      setViews((live) =>
+        live.filter(
+          (view) => view.key !== viewKey || !view.preloaded || view.key === shownRef.current,
+        ),
+      );
+    },
+    [remember, show],
+  );
 
   /** A WebView's renderer is gone: drop its page, and load the one on screen again. */
   const onGone = useCallback((viewKey: string) => {

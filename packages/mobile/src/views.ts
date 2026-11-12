@@ -37,6 +37,12 @@ export interface LiveView {
   open: OpenRequest | null;
   /** Loaded ahead ({@link preloadView}) and not shown since: the first to go. */
   preloaded: boolean;
+  /**
+   * For a peer's page (its computer's mount): the id of the phone's own row
+   * for that peer, shown instead when the mount fails to load
+   * ({@link mountFallback}); null when the phone has none, or for a row's page.
+   */
+  fallback: string | null;
 }
 
 /**
@@ -62,20 +68,22 @@ export function pathOf(view: LiveView): string {
 /**
  * @returns `views` with the page of `machine`, or of its `peer`, shown: last,
  *   loaded again when its door changed, and the least recently shown beyond
- *   {@link LIVE_MAX} dropped.
+ *   {@link LIVE_MAX} dropped. `fallback` is the {@link LiveView.fallback} of a
+ *   peer's page.
  */
 export function showView(
   views: readonly LiveView[],
   machine: Machine,
   peer: LiveView["peer"],
   open: OpenRequest | null,
+  fallback: string | null = null,
 ): LiveView[] {
   const key = keyOf(machine.id, peer);
   const known = views.find((view) => view.key === key);
   const door = doorOf(machine);
   const shown: LiveView =
     known !== undefined && known.door === door
-      ? { ...known, open, preloaded: false }
+      ? { ...known, open, fallback, preloaded: false }
       : {
           key,
           machine: machine.id,
@@ -83,6 +91,7 @@ export function showView(
           generation: (known?.generation ?? 0) + 1,
           door,
           open,
+          fallback,
           preloaded: false,
         };
   return [...views.filter((view) => view.key !== key), shown].slice(-LIVE_MAX);
@@ -112,6 +121,7 @@ export function preloadView(
       generation: 1,
       door: doorOf(machine),
       open: null,
+      fallback: null,
       preloaded: true,
     },
     ...views,
@@ -200,21 +210,23 @@ function tailscaleDirect(row: Machine, probe: PhoneProbe | null): boolean {
 
 /**
  * Whether a page's computer lists a machine, by the mount id a switcher names
- * it with, with a route now (its `/kivotos/peers` `route !== null`).
+ * it with, over a direct Tailscale link now (its `/kivotos/peers` `route`). A
+ * computer whose own way there is the relay is no better than the phone's own
+ * relay route, and its mount adds a hop.
  */
 function listedRoute(listed: readonly ListedMachine[] | null, id: string): boolean {
-  return listed?.some((entry) => entry.target.id === id && entry.online) === true;
+  return listed?.some((entry) => entry.target.id === id && entry.route === "tailscale") === true;
 }
 
 /**
  * Where a page's switcher sends the phone:
  * - the phone's own row for the target when Tailscale reaches it directly
  *   ({@link tailscaleDirect}): nothing is faster;
- * - else, when the page's computer lists the target with a route (`listed`,
- *   what that page last answered for `/kivotos/peers`), the target as its
- *   computer mounts it, through that computer's door and cache
- *   (`/kivotos/peer/<id>/`): the phone's own row may reach it only over the
- *   relay, while its computer's way there may be a direct one, and its mount
+ * - else, when the page's computer lists the target over Tailscale (`listed`,
+ *   what that page last answered for `/kivotos/peers`, {@link listedRoute}),
+ *   the target as its computer mounts it, through that computer's door and
+ *   cache (`/kivotos/peer/<id>/`): the phone's own row may reach it only over
+ *   the relay, while its computer's way there is a direct one, and its mount
  *   also reuses the cache and the door the page already has;
  * - else the phone's own row ({@link machineForTarget}), else the computer's
  *   mount as before.
@@ -245,6 +257,43 @@ export function switchTarget(
 }
 
 /**
+ * The {@link LiveView.fallback} of the page a switch shows (`to`, from
+ * {@link switchTarget}): when it is the computer's mount, the phone's own row
+ * for the target that its last probe still reaches ({@link machineForTarget}).
+ * @returns that row's id, or null.
+ */
+export function mountFallback(
+  machines: readonly Machine[],
+  probe: PhoneProbe | null,
+  to: { machine: Machine; peer: LiveView["peer"] },
+  target: SwitchTarget,
+): string | null {
+  if (to.peer === null) return null;
+  const row = machineForTarget(machines, target, probe);
+  return row === null || row.id === to.machine.id ? null : row.id;
+}
+
+/**
+ * The main document of page `viewKey` failed. When it is the page on screen
+ * and a computer's mount with a {@link LiveView.fallback} row still in the
+ * list, that row is shown instead of the cover and its retries.
+ * @returns the failed mount page and the row to show, or null to keep the cover.
+ */
+export function mountFailover(
+  views: readonly LiveView[],
+  machines: readonly Machine[],
+  viewKey: string,
+  shown: string | null,
+): { view: LiveView & { peer: NonNullable<LiveView["peer"]> }; row: Machine } | null {
+  if (viewKey !== shown) return null;
+  const view = views.find((live) => live.key === viewKey);
+  if (view === undefined || view.peer === null || view.fallback === null) return null;
+  const row = machines.find((machine) => machine.id === view.fallback);
+  if (row === undefined) return null;
+  return { view: { ...view, peer: view.peer }, row };
+}
+
+/**
  * The pages to load ahead from a phone row's page `from`: where its switcher
  * would send the phone ({@link switchTarget}) for the machines its computer
  * lists with a route, the ones this phone switched to from it lately first
@@ -252,10 +301,12 @@ export function switchTarget(
  * `from` itself, and at most {@link PRELOAD_MAX}.
  *
  * `switchTarget` picks the page a switch would show: the phone's own row for a
- * machine Tailscale reaches directly, else the computer's mount. `probe` is
- * the phone's latest probe when it is fresh (the probes stop while a page is
- * shown), so a stale or missing one never loads a direct page the switch would
- * not show; without it the computer's mount is loaded ahead.
+ * machine Tailscale reaches directly, else the computer's mount when the
+ * computer lists the machine over Tailscale, else the phone's own row, else
+ * the computer's mount. `probe` is the phone's latest probe when it is fresh
+ * (the probes stop while a page is shown), so a stale or missing one never
+ * loads a direct page the switch would not show; without it the computer's
+ * mount of a machine it lists over Tailscale is loaded ahead.
  */
 export function preloadTargets(
   machines: readonly Machine[],
