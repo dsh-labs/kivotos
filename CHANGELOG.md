@@ -2,6 +2,33 @@
 
 CI publishes the section that matches a pushed `v<version>` tag as the description of its GitHub Release. Write the section before tagging.
 
+## Unreleased
+
+### Highlights
+
+- Support DeepSeek Harness 0.2.2-rc.2, the release the npm `next` tag points at. The pinned index fixture is re-captured from it (its plugin batches now carry 57 + 17 rows), `PINNED_DSH` is pinned to 0.2.2-rc.2, and every target-version reference in comments, docs and the issue template is updated. 0.2.2-rc.1 keeps working, and its index fixture stays in the suite as a regression baseline.
+- Re-verified against the release: the index rewrites (viewport, manifest, boot graph, boot gate), the page probes, the desktop boot guard and every adapter marker still match what 0.2.2-rc.2 serves. The only adapter change is the `session-store` marker: 0.2.2-rc.2's client bundles spell their string literals with backticks, so the storage key is now matched bare instead of JSON-quoted. Nothing in the release's upgrade guide reaches a coupling point (see Compatibility).
+
+### Breaking changes
+
+- None.
+
+### Fixes
+
+- None.
+
+### Compatibility
+
+- DeepSeek Harness `>=0.2.1-rc.5 <0.3.0-0` (verified on 0.2.1-rc.5, 0.2.2-rc.1 and 0.2.2-rc.2). The Android app and the relay are unchanged; a 0.3.0 app and relay keep working with this plugin.
+- Known gap, unchanged by this release: the full-screen phone Settings panel has been off since 0.2.2-rc.1. Its probe asks for the `_content` wrapper that 0.2.2 removed from the Settings panel (0.2.1-rc.2 still had it), so the `phone-settings` point reports `changed` at run time and its stylesheet is withheld; the panel renders as dsh's own centered dialog on a phone. Tracked for a follow-up, not fixed here.
+
+### 中文
+
+- 支持 DeepSeek Harness 0.2.2-rc.2（npm `next` 标签当前指向的版本）：固定 index 夹具改为从 0.2.2-rc.2 采集（插件批次现在为 57 + 17 行），`PINNED_DSH` 钉到 0.2.2-rc.2，注释、文档与 issue 模板里的目标版本字样同步更新；0.2.2-rc.1 仍然可用，其 index 夹具保留在测试里作为回归基线。
+- 已在新版本上重新验证：index 改写（viewport、manifest、boot graph、boot gate）、页面探测、桌面启动保护和全部适配器标记仍与 0.2.2-rc.2 的产物一致。适配器唯一的改动是 `session-store` 标记：0.2.2-rc.2 的客户端 bundle 用反引号书写字符串字面量，因此存储键改为不带引号的匹配形式。该版本升级说明中没有触及任何耦合点（见「兼容性」）。
+- 兼容范围不变：`>=0.2.1-rc.5 <0.3.0-0`（已在 0.2.1-rc.5、0.2.2-rc.1、0.2.2-rc.2 上验证）。Android 应用与 relay 未改动，0.3.0 的应用和 relay 仍可用。
+- 已知问题（本次未改动）：手机全屏 Settings 面板从 0.2.2-rc.1 起一直处于关闭状态。它的探测要求 Settings 面板里的 `_content` 包装层，而 0.2.2 已移除该层（0.2.1-rc.2 还有），因此运行时 `phone-settings` 报告 `changed`、对应样式表被禁用，手机上面板按 dsh 自己的居中对话框渲染。留待后续单独修复。
+
 ## v0.6.1
 
 ### Highlights

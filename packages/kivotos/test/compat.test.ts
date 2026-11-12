@@ -30,8 +30,33 @@ import {
   selectSession,
 } from "../src/dsh/sessions.ts";
 
-/** The index dsh 0.2.2-rc.1 serves, byte for byte (`dsh --profile web`, fetched signed in). */
-const PINNED = readFileSync(new URL("fixtures/dsh-0.2.2-rc.1.index.html", import.meta.url), "utf8");
+/** An index a dsh release serves, byte for byte (`dsh --profile web`, fetched signed in). */
+interface PinnedIndex {
+  readonly version: string;
+  readonly index: string;
+  /** Rows of each boot batch, in boot order. */
+  readonly rows: readonly number[];
+}
+
+/**
+ * Every index the probes are kept working on: the release Kivotos is pinned
+ * to, and the one before it, since both are still served by released dsh.
+ */
+const FIXTURES: readonly PinnedIndex[] = [
+  {
+    version: "0.2.2-rc.1",
+    index: readFileSync(new URL("fixtures/dsh-0.2.2-rc.1.index.html", import.meta.url), "utf8"),
+    rows: [1, 57, 15],
+  },
+  {
+    version: "0.2.2-rc.2",
+    index: readFileSync(new URL("fixtures/dsh-0.2.2-rc.2.index.html", import.meta.url), "utf8"),
+    rows: [1, 57, 17],
+  },
+];
+
+/** The index dsh 0.2.2-rc.2 serves: what the altered-index tests start from. */
+const PINNED = FIXTURES[1].index;
 
 /** The pinned index with one string replaced, the way an upstream change would. */
 function altered(from: string, to: string): string {
@@ -43,28 +68,33 @@ const VIEWPORT = '<meta name="viewport" content="width=device-width, initial-sca
 const MANIFEST = '<link rel="manifest" href="./manifest.webmanifest" />';
 const GATE = "(globalThis.__DSH_BOOT_READY__ ??= Promise.withResolvers()).resolve()";
 
-test("every index rewrite applies to the index dsh 0.2.2-rc.1 serves", () => {
-  const viewport = coverViewport(PINNED);
-  assert.equal(viewport.probe.state, "ok");
-  assert.match(viewport.html, /viewport-fit=cover/);
-  const manifest = credentialedManifest(PINNED);
-  assert.equal(manifest.probe.state, "ok");
-  assert.match(manifest.html, /crossorigin="use-credentials"/);
-  assert.equal(bootGraphOf(PINNED).probe.state, "ok");
-  assert.equal(guardDesktopBoot(PINNED, "/kivotos/peer/b").probe.state, "ok");
-  // The warm-up reads its targets from the same graph the probe accepted.
-  assert.ok((bootResources(PINNED)?.targets.length ?? 0) > 0);
-  // The piece manifests read every batch's rows, each served on its own URL.
-  const graph = bootGraphOf(PINNED).graph;
-  assert.deepEqual(
-    graph?.urls.map((url) => graph.rows.get(url)?.length),
-    [1, 57, 15],
-  );
-  assert.ok(
-    [...(graph?.rows.values() ?? [])]
-      .flat()
-      .every((row) => /^plugins\/\?\?[^,]+&rev=\w+$/.test(row)),
-  );
+test("every index rewrite applies to each pinned index", () => {
+  for (const fixture of FIXTURES) {
+    const release = `dsh ${fixture.version}`;
+    const viewport = coverViewport(fixture.index);
+    assert.equal(viewport.probe.state, "ok", release);
+    assert.match(viewport.html, /viewport-fit=cover/);
+    const manifest = credentialedManifest(fixture.index);
+    assert.equal(manifest.probe.state, "ok", release);
+    assert.match(manifest.html, /crossorigin="use-credentials"/);
+    assert.equal(bootGraphOf(fixture.index).probe.state, "ok", release);
+    assert.equal(guardDesktopBoot(fixture.index, "/kivotos/peer/b").probe.state, "ok", release);
+    // The warm-up reads its targets from the same graph the probe accepted.
+    assert.ok((bootResources(fixture.index)?.targets.length ?? 0) > 0, release);
+    // The piece manifests read every batch's rows, each served on its own URL.
+    const graph = bootGraphOf(fixture.index).graph;
+    assert.deepEqual(
+      graph?.urls.map((url) => graph.rows.get(url)?.length),
+      fixture.rows,
+      release,
+    );
+    assert.ok(
+      [...(graph?.rows.values() ?? [])]
+        .flat()
+        .every((row) => /^plugins\/\?\?[^,]+&rev=\w+$/.test(row)),
+      release,
+    );
+  }
 });
 
 test("a changed index is served as dsh sent it, and says which markup moved", () => {
@@ -223,7 +253,7 @@ function pageOf(...roots: Node[]): { querySelector(selectors: string): TestNode 
 const cls = (value: string): Record<string, string> => ({ class: value });
 
 /**
- * dsh 0.2.2-rc.1's AppFrame with a conversation, as rendered (ui-layout
+ * dsh 0.2.2-rc.2's AppFrame with a conversation, as rendered (ui-layout
  * AppFrame.module.css `pI_x6G_`, ui-sidebar `hHd-Xa_`, ui-conversation `wSkVaW_`).
  */
 function frame(overrides: { column?: string; header?: string; composer?: string } = {}): Node {
@@ -266,7 +296,7 @@ function frame(overrides: { column?: string; header?: string; composer?: string 
   };
 }
 
-/** dsh 0.2.2-rc.1's Settings panel (ui-settings-general `VOzbGW_`). */
+/** dsh 0.2.2-rc.2's Settings panel (ui-settings-general `VOzbGW_`). */
 function settings(overrides: { navList?: string; options?: string } = {}): Node {
   return {
     attrs: { ...cls("VOzbGW_panel"), "data-shortcut-modal": "settings" },
@@ -295,7 +325,7 @@ function settings(overrides: { navList?: string; options?: string } = {}): Node 
   };
 }
 
-test("the phone probes pass on dsh 0.2.2-rc.1's frame, conversation and Settings panel", () => {
+test("the phone probes pass on dsh 0.2.2-rc.2's frame, conversation and Settings panel", () => {
   const page = pageOf(frame(), settings());
   assert.equal(probePhoneLayout(page)?.state, "ok");
   assert.equal(probePhoneConversation(page)?.state, "ok");

@@ -1,5 +1,5 @@
 /**
- * dsh 0.2.2-rc.1's process layout and quit path, as a safe restart meets them.
+ * dsh 0.2.2-rc.2's process layout and quit path, as a safe restart meets them.
  *
  * Desktop app (`apps/desktop`, `lib/main.js`): the Electron main process
  * spawns the Host as a child (`dsh-desktop-host/lib/index.js`, run with
