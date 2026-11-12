@@ -85,8 +85,9 @@ export function assignScript(path: string): string {
 /**
  * Script that offers the hardware Back to the page first: the plugin's
  * `window.__kivotosBack` (packages/kivotos/src/client.tsx, `usePhoneBack`)
- * closes what dsh shows over the conversation, or opens its Session list, and
- * answers whether it did. A page without one (an older Kivotos) answers false.
+ * closes the topmost thing dsh shows over the conversation (a menu, the
+ * switcher, a dialog, Settings, the drawer) and answers whether it did; it
+ * never opens the drawer. A page without one (an older Kivotos) answers false.
  * @param seq - which Back this answers, so a late answer to an earlier one is ignored.
  * @returns script source; the page posts `kivotos.back`.
  */

@@ -15,7 +15,7 @@ CI publishes the section that matches a pushed `v<version>` tag as the descripti
 
 ### Fixes
 
-- None.
+- Android: Back on a machine's page no longer opens dsh's sidebar (#61). It closes the topmost thing open over the conversation (a menu or the machine switcher, a dialog with a close button, Settings, then the drawer, which Back used to leave open and spend), and with nothing open it leaves the page: a peer's page goes to its computer's page, a row's page to the machine list. A dialog without a close button (the preview notice) no longer holds Back. The page answers before it closes anything, so a slow re-render no longer makes the app leave the page as well. Back also closes menus and dialogs at tablet widths and when the phone-layout probe fails, where it used to leave the page with them open. The page now goes before the WebView's history.
 
 ### Compatibility
 

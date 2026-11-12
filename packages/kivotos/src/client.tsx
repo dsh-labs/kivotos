@@ -43,7 +43,7 @@ import { sessionFileAddress } from "./dsh/files.ts";
 import { peerFileIntake } from "./dsh/peer-files.ts";
 import {
   APP_SAFE_AREA,
-  dismissTopLayer,
+  backLayer,
   onSessionRowTap,
   PARTS,
   phoneStylesheet,
@@ -511,32 +511,35 @@ interface AppBridge {
 }
 
 /**
- * The phone app's hardware Back, inside dsh first, as a native app's stack:
- * a menu or Settings over the page goes first (`dismissTopLayer`), then the
- * conversation goes back to its Session list (the drawer opens). With the
- * Session list open the page has nothing left to go back to: it answers
- * false and the app shows its machine list. The app asks
- * `window.__kivotosBack` and falls back to its list when a page (an older
- * Kivotos) has none.
- * @param active - the drawer layout applies (phone width, frame as pinned).
- * @param collapsed - the drawer is closed.
+ * The phone app's hardware Back, inside dsh first, the way Android treats one
+ * screen with things open over it: the topmost one closes (a menu or the
+ * switcher, a dialog with a close button, Settings, then the drawer;
+ * `backLayer`). With nothing open, or only a dialog without a close button
+ * (the preview notice), the page answers false and the app leaves it. Back
+ * never opens the drawer. Registered whenever the app hosts the page, at any
+ * width and whatever the phone-layout probe says: without the drawer layout
+ * there is simply no drawer to close. The page answers at once and closes the
+ * layer in the next task, so a slow re-render (seconds on a loaded phone)
+ * never runs past the app's answer window (`BACK_ANSWER_MS`). The app asks
+ * `window.__kivotosBack` and leaves at once when a page (an older Kivotos)
+ * has none.
  * @param toggleSidebar - opens or closes the drawer.
  */
-function usePhoneBack(active: boolean, collapsed: boolean, toggleSidebar: () => void): void {
+function usePhoneBack(toggleSidebar: () => void): void {
   useEffect(() => {
-    if (!active) return undefined;
+    if (!IN_APP) return undefined;
     const page = window as unknown as AppBridge;
     const back = (): boolean => {
-      if (dismissTopLayer(document)) return true;
-      if (!collapsed) return false;
-      toggleSidebar();
+      const layer = backLayer(document);
+      if (layer.kind === "none" || layer.kind === "kept") return false;
+      setTimeout(layer.kind === "drawer" ? toggleSidebar : layer.close, 0);
       return true;
     };
     page.__kivotosBack = back;
     return () => {
       if (page.__kivotosBack === back) delete page.__kivotosBack;
     };
-  }, [active, collapsed, toggleSidebar]);
+  }, [toggleSidebar]);
 }
 
 /**
@@ -1414,7 +1417,7 @@ function PhoneShell({ t, toggleSidebar }: Injected): ReactNode {
   // inside it pads 0; a phone's own browser pads the safe areas itself.
   const safeArea = IN_APP ? APP_SAFE_AREA : undefined;
   useCloseDrawerOnSelect(layout && phone && !collapsed, toggleSidebar);
-  usePhoneBack(layout && phone, collapsed, toggleSidebar);
+  usePhoneBack(toggleSidebar);
   usePhoneComposerFocus(layout && phone);
   usePhoneComposerLineBreak(layout && phone);
   return (

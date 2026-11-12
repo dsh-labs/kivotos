@@ -192,33 +192,33 @@ export const MachineView = memo(function MachineView(props: Props) {
     if (visible && shell.current) reportReady();
   }, [visible, reportReady]);
 
-  // Only the page on screen takes the hardware Back: the WebView's history
-  // first, then the page itself (a menu, Settings, the conversation back to
-  // its Session list; `backScript`), and only what the page leaves goes to
-  // the app (a peer's page to its computer's, a row's page to the list).
-  // A page whose shell is not up, or behind the offline card, has nothing to
-  // go back to.
+  // Only the page on screen takes the hardware Back: the page itself first
+  // (what dsh shows over the conversation closes; `backScript`), then the
+  // WebView's history (a page the switcher's fallback loaded goes back to the
+  // one it left), and only then the app (a peer's page to its computer's, a
+  // row's page to the list). A page whose shell is not up, or behind the
+  // offline card, has nothing open to close.
   const failed = failure !== null;
+  const leave = useCallback(() => {
+    if (canGoBack.current) web.current?.goBack();
+    else onBack(viewKey);
+  }, [viewKey, onBack]);
   const onHardwareBack = useCallback((): boolean => {
-    if (canGoBack.current) {
-      web.current?.goBack();
-      return true;
-    }
     // The page is still answering the last Back.
     if (backWait.current !== null) return true;
     if (failed || !shell.current || web.current === null) {
-      onBack(viewKey);
+      leave();
       return true;
     }
     backSeq.current += 1;
     const seq = backSeq.current;
     backWait.current = setTimeout(() => {
       backWait.current = null;
-      if (seq === backSeq.current) onBack(viewKey);
+      if (seq === backSeq.current) leave();
     }, BACK_ANSWER_MS);
     web.current.injectJavaScript(backScript(seq));
     return true;
-  }, [failed, viewKey, onBack]);
+  }, [failed, leave]);
   useEffect(() => {
     if (!visible) return undefined;
     const subscription = BackHandler.addEventListener("hardwareBackPress", onHardwareBack);
@@ -238,7 +238,7 @@ export const MachineView = memo(function MachineView(props: Props) {
         if (message.seq !== backSeq.current || backWait.current === null) return;
         clearTimeout(backWait.current);
         backWait.current = null;
-        if (!message.handled) onBack(viewKey);
+        if (!message.handled) leave();
         return;
       }
       // A document that loaded without an error runs the bridge: the page is back.
@@ -271,7 +271,7 @@ export const MachineView = memo(function MachineView(props: Props) {
       session.current = message.sessionId;
       if (visible) onSession(viewKey, message.sessionId);
     },
-    [viewKey, visible, onSession, onSwitch, onReady, onBack, reportReady],
+    [viewKey, visible, onSession, onSwitch, onReady, leave, reportReady],
   );
   const onNavigation = useCallback((state: WebViewNavigation) => {
     canGoBack.current = state.canGoBack;
