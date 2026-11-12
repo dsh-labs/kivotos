@@ -4,7 +4,7 @@
  * Kivotos owns both ends of `/api/remote.mux`, so it can give a hop
  * compression that its other end does not do itself: the browser/phone hop of
  * a page served through the tailnet listener or a relay session, where the
- * other end (dsh 0.2.2-rc.1) already negotiates the extension end to end, is
+ * other end (dsh 0.2.2-rc.2) already negotiates the extension end to end, is
  * left alone; an older dsh Host, whose gateway has no compression
  * (`websocketCompression` arrived in 0.2.2), gets the client hop compressed
  * here. Nothing is ever compressed twice: when both ends negotiated the

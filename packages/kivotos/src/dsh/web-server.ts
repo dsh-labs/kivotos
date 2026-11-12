@@ -1,5 +1,5 @@
 /**
- * dsh 0.2.2-rc.1's webServer, as Kivotos proxies it: its own API paths, the
+ * dsh 0.2.2-rc.2's webServer, as Kivotos proxies it: its own API paths, the
  * naming of the build assets it serves, and how it puts its plugin batches
  * together.
  *

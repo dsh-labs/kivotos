@@ -1,5 +1,5 @@
 /**
- * dsh 0.2.2-rc.1's client stores, as Kivotos reads and writes them.
+ * dsh 0.2.2-rc.2's client stores, as Kivotos reads and writes them.
  *
  * dsh persists its client stores whole as JSON in localStorage under fixed
  * keys (`dsh-client-store` `attachPersistence`). The current Session is
@@ -110,5 +110,10 @@ export function injectStorageNamespace(html: string, peerId: string): string {
   return injectHead(html, script);
 }
 
-/** Strings the nightly check expects in dsh's bundles (scripts/dsh-compat.mjs). */
-export const MARKERS = [JSON.stringify(CURRENT_SESSION_KEY), SHOWN_SESSION];
+/**
+ * Strings the nightly check expects in dsh's bundles (scripts/dsh-compat.mjs).
+ * The storage key is bare, not JSON-quoted: the bundles spell their strings
+ * differently between releases (0.2.2-rc.2 minifies with backticks), and the
+ * check only needs the key to still be there.
+ */
+export const MARKERS = [CURRENT_SESSION_KEY, SHOWN_SESSION];
