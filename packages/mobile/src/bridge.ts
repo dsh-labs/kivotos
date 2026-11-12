@@ -83,20 +83,51 @@ export function assignScript(path: string): string {
 }
 
 /**
- * Script that offers the hardware Back to the page first: the plugin's
+ * Script that offers the hardware Back to a page that never reported its
+ * layers (`kivotos.layers`), an older Kivotos: the plugin's
  * `window.__kivotosBack` (packages/kivotos/src/client.tsx, `usePhoneBack`)
- * closes the topmost thing dsh shows over the conversation (a menu, the
- * switcher, a dialog, Settings, the drawer) and answers whether it did; it
- * never opens the drawer. A page without one (an older Kivotos) answers false.
+ * closes what dsh shows over the conversation and answers whether it did. A
+ * page without one answers false.
  * @param seq - which Back this answers, so a late answer to an earlier one is ignored.
  * @returns script source; the page posts `kivotos.back`.
  */
 export function backScript(seq: number): string {
+  return answerScript("__kivotosBack", seq);
+}
+
+/**
+ * Script that closes the layer a page reported open (`kivotos.layers`): the
+ * plugin's `window.__kivotosClose` closes the topmost one (a menu, the
+ * switcher, a dialog, Settings, the drawer) and answers whether it did.
+ * @param seq - which Back this answers.
+ * @returns script source; the page posts `kivotos.back`.
+ */
+export function closeScript(seq: number): string {
+  return answerScript("__kivotosClose", seq);
+}
+
+function answerScript(name: string, seq: number): string {
   return `(() => {
   let handled = false;
-  try { handled = typeof window.__kivotosBack === "function" && window.__kivotosBack() === true; } catch (e) {}
+  try { handled = typeof window.${name} === "function" && window.${name}() === true; } catch (e) {}
   window.ReactNativeWebView.postMessage(JSON.stringify({ type: "kivotos.back", seq: ${seq}, handled }));
 })(); true;`;
+}
+
+/** What a page reports Back would close (`usePhoneBack`); null: nothing. */
+export type BackOpen = "menu" | "dialog" | "drawer" | null;
+
+/**
+ * What a hardware Back on a page does, from the page's last `kivotos.layers`
+ * (undefined: it never reported, an older Kivotos): close the layer, leave
+ * the page (its WebView history, then the app), or ask the page with a
+ * timeout ({@link backScript}).
+ * @param open - the page's last report.
+ * @returns the action.
+ */
+export function backAction(open: BackOpen | undefined): "close" | "leave" | "ask" {
+  if (open === undefined) return "ask";
+  return open === null ? "leave" : "close";
 }
 
 /** The machine a switcher row names, as the page's computer knows it (`MachineInfo`). */
@@ -125,8 +156,10 @@ export type BridgeMessage =
   | { type: "ready" }
   /** {@link PEERS_SCRIPT}'s answer; null when the computer did not list its machines. */
   | { type: "kivotos.peers"; machines: ListedMachine[] | null }
-  /** {@link backScript}'s answer: whether the page spent the Back itself. */
+  /** {@link backScript}'s and {@link closeScript}'s answer: whether the page spent the Back itself. */
   | { type: "kivotos.back"; seq: number; handled: boolean }
+  /** What Back would close on the page, pushed on every change (`usePhoneBack`). */
+  | { type: "kivotos.layers"; open: BackOpen }
   | {
       type: "kivotos.switch";
       machine: SwitchTarget;
@@ -221,6 +254,12 @@ export function parseBridgeMessage(data: string): BridgeMessage | null {
     return typeof message.seq === "number"
       ? { type: "kivotos.back", seq: message.seq, handled: message.handled === true }
       : null;
+  if (message.type === "kivotos.layers") {
+    const open = message.open;
+    return open === null || open === "menu" || open === "dialog" || open === "drawer"
+      ? { type: "kivotos.layers", open }
+      : null;
+  }
   if (message.type !== "session" || typeof message.sessionId !== "string") return null;
   return { type: "session", sessionId: message.sessionId, path: String(message.path ?? "") };
 }

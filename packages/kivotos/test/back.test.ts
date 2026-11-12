@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { backLayer, PARTS } from "../src/dsh/frame.ts";
+import { backLayer, closeLayer, PARTS } from "../src/dsh/frame.ts";
 
 /** A rendered element: tag, attributes, children; enough for `backLayer`'s selectors. */
 interface Node {
   tag?: string;
   attrs?: Record<string, string>;
   children?: Node[];
-  /** Set by `pageOf`: what a click on it did. */
+  /** What clicks on it did (`click()`). */
   clicked?: number;
+  /** Gone from the page: dsh has rendered its closing. */
+  removed?: boolean;
 }
 
 /** One compound selector: `tag`, `.class`, `[attr]`, `[attr=v]`, `[attr="v"]`, `[attr*="v"]`. */
@@ -34,13 +36,22 @@ function all(nodes: Node[]): Node[] {
 }
 
 interface Element {
+  readonly isConnected: boolean;
   matches(selectors: string): boolean;
   querySelector(selectors: string): Element | null;
   click(): void;
 }
 
+// One element per node, so `backLayer`'s `closing` set can hold them.
+const elements = new WeakMap<Node, Element>();
+
 function element(node: Node): Element {
-  return {
+  const known = elements.get(node);
+  if (known !== undefined) return known;
+  const self: Element = {
+    get isConnected() {
+      return node.removed !== true;
+    },
     matches: (selectors) => matches(node, selectors),
     querySelector: (selectors) => {
       const found = all(node.children ?? []).find((each) => matches(each, selectors));
@@ -50,21 +61,23 @@ function element(node: Node): Element {
       node.clicked = (node.clicked ?? 0) + 1;
     },
   };
+  elements.set(node, self);
+  return self;
 }
 
-/** A page of `roots` in document order, as `backLayer` reads it. */
+/** A page of `roots` in document order, as `backLayer` reads it; a removed node is gone. */
 function pageOf(...roots: Node[]): Document {
-  const nodes = all(roots);
+  const nodes = (): Node[] => all(roots).filter((node) => node.removed !== true);
   const page = {
     body: element({ tag: "body" }),
     querySelector: (selectors: string) => {
-      const found = nodes.find((node) => matches(node, selectors));
+      const found = nodes().find((node) => matches(node, selectors));
       return found === undefined ? null : element(found);
     },
-    querySelectorAll: (selectors: string) => {
-      const found = nodes.filter((node) => matches(node, selectors)).map(element);
-      return { length: found.length, item: (index: number) => found[index] ?? null };
-    },
+    querySelectorAll: (selectors: string) =>
+      nodes()
+        .filter((node) => matches(node, selectors))
+        .map(element),
   };
   return page as unknown as Document;
 }
@@ -105,51 +118,87 @@ const settings = (): Node => ({
   ],
 });
 
+const openOf = (page: Document, closing = new Set<Element>()): string | null =>
+  backLayer(page, closing as unknown as Set<globalThis.Element>)?.open ?? null;
+
 test("Back finds nothing over a conversation with the drawer closed", () => {
-  assert.deepEqual(backLayer(pageOf(frame(false))), { kind: "none" });
+  assert.equal(openOf(pageOf(frame(false))), null);
 });
 
 test("Back finds the open drawer, not a modal without a close button", () => {
   // SidebarRoot is `[role=dialog][aria-modal=true]` with no `_close` while open.
-  assert.equal(backLayer(pageOf(frame(true))).kind, "drawer");
+  assert.equal(openOf(pageOf(frame(true))), "drawer");
   assert.ok(PARTS.drawer.includes("sidebar"));
 });
 
 test("Back closes a menu or the switcher before the drawer under it", () => {
   const menu: Node = { attrs: { role: "menu" } };
-  assert.equal(backLayer(pageOf(frame(true), menu)).kind, "close");
+  assert.equal(openOf(pageOf(frame(true), menu)), "menu");
   const switcher: Node = { tag: "ul", attrs: cls("kivotos-machines-list") };
   // The switcher sits inside the drawer's footer: after SidebarRoot in document order.
-  assert.equal(backLayer(pageOf(frame(true, [switcher]))).kind, "close");
+  assert.equal(openOf(pageOf(frame(true, [switcher]))), "menu");
 });
 
 test("Back clicks the close button of the topmost dialog", () => {
   const confirm = close();
   const dialog: Node = { attrs: { ...cls("_dialog_14mp3_33"), ...modal }, children: [confirm] };
-  const layer = backLayer(pageOf(frame(true), settings(), dialog));
-  assert.equal(layer.kind, "close");
-  if (layer.kind === "close") layer.close();
+  const page = pageOf(frame(true), settings(), dialog);
+  const layer = backLayer(page, new Set());
+  assert.equal(layer?.open, "dialog");
+  if (layer !== null) closeLayer(page, layer, () => assert.fail("not the drawer"));
   assert.equal(confirm.clicked, 1);
 });
 
 test("Back closes Settings over the drawer by its header button", () => {
   const panel = settings();
-  const layer = backLayer(pageOf(frame(true), panel));
-  assert.equal(layer.kind, "close");
-  if (layer.kind === "close") layer.close();
+  const page = pageOf(frame(true), panel);
+  const layer = backLayer(page, new Set());
+  assert.equal(layer?.open, "dialog");
+  if (layer !== null) closeLayer(page, layer, () => assert.fail("not the drawer"));
   assert.equal(all([panel]).find((node) => node.tag === "button")?.clicked, 1);
 });
 
-test("Back keeps a dialog without a close button (the preview notice)", () => {
+test("Back closes the drawer through the caller", () => {
+  const page = pageOf(frame(true));
+  const layer = backLayer(page, new Set());
+  let closed = 0;
+  if (layer !== null) closeLayer(page, layer, () => (closed += 1));
+  assert.equal(closed, 1);
+});
+
+test("Back has nothing to close under a dialog without a close button (the preview notice)", () => {
   const notice: Node = {
     attrs: { ...cls("_dialog_14mp3_33 jLrgrW_dialog"), ...modal },
     children: [{ tag: "button", attrs: cls("_button_1ulci_2 _primary_1ulci_30") }],
   };
-  assert.deepEqual(backLayer(pageOf(frame(false), notice)), { kind: "kept" });
+  assert.equal(openOf(pageOf(frame(true), notice)), null);
 });
 
 test("Back does not read the drawer as a modal when dsh is not in drawer mode", () => {
   // Wide layout: SidebarRoot carries no role and no aria-modal.
   const wide: Node = { attrs: cls("pI_x6G_frame"), children: [{ attrs: cls("hHd-Xa_root") }] };
-  assert.deepEqual(backLayer(pageOf(wide)), { kind: "none" });
+  assert.equal(openOf(pageOf(wide)), null);
+});
+
+test("a second Back before dsh renders the first close takes the next layer", () => {
+  const menu: Node = { attrs: { role: "menu" } };
+  const drawer = frame(true);
+  const page = pageOf(drawer, menu);
+  const closing = new Set<globalThis.Element>();
+  const first = backLayer(page, closing);
+  assert.equal(first?.open, "menu");
+  if (first !== null) closing.add(first.element);
+  // The menu is still in the page: the drawer is next, and is not toggled twice.
+  const second = backLayer(page, closing);
+  assert.equal(second?.open, "drawer");
+  if (second !== null) closing.add(second.element);
+  assert.equal(backLayer(page, closing), null);
+  // Once rendered closed, the layers leave `closing`: the drawer reopened is open again.
+  menu.removed = true;
+  const root = all([drawer]).find((node) => node.attrs?.["data-shortcut-modal"] === "sidebar");
+  delete root?.attrs?.["aria-modal"];
+  assert.equal(backLayer(page, closing), null);
+  assert.equal(closing.size, 0);
+  if (root?.attrs !== undefined) root.attrs["aria-modal"] = "true";
+  assert.equal(backLayer(page, closing)?.open, "drawer");
 });

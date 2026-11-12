@@ -22,8 +22,11 @@ import {
 } from "../modules/kivotos-attention/src/KivotosAttentionModule";
 import {
   assignScript,
+  backAction,
   backScript,
+  type BackOpen,
   BRIDGE,
+  closeScript,
   openSessionScript,
   parseBridgeMessage,
   PEERS_SCRIPT,
@@ -133,10 +136,15 @@ export const MachineView = memo(function MachineView(props: Props) {
   const web = useRef<WebView>(null);
   const holder = useRef<View>(null);
   const canGoBack = useRef(false);
-  // The last hardware Back offered to the page, and the timer that takes it
-  // when the page does not answer (`BACK_ANSWER_MS`).
+  // What the page last reported Back would close (`kivotos.layers`); undefined
+  // until it reports in this document (an older Kivotos never does).
+  const layers = useRef<BackOpen | undefined>(undefined);
+  // The last hardware Back sent to the page, the timer that takes it when a
+  // page that does not report its layers does not answer (`BACK_ANSWER_MS`),
+  // and the last close sent to one that does.
   const backSeq = useRef(0);
   const backWait = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeSeq = useRef(0);
   // A Session to open once dsh is up: the request the page was mounted with, or one that came while it loaded.
   const pending = useRef(open?.sessionId ?? null);
   const handled = useRef(open?.seq);
@@ -193,25 +201,38 @@ export const MachineView = memo(function MachineView(props: Props) {
   }, [visible, reportReady]);
 
   // Only the page on screen takes the hardware Back: the page itself first
-  // (what dsh shows over the conversation closes; `backScript`), then the
-  // WebView's history (a page the switcher's fallback loaded goes back to the
-  // one it left), and only then the app (a peer's page to its computer's, a
-  // row's page to the list). A page whose shell is not up, or behind the
-  // offline card, has nothing open to close.
+  // (what dsh shows over the conversation closes), then the WebView's history
+  // (a page the switcher's fallback loaded goes back to the one it left), and
+  // only then the app (a peer's page to its computer's, a row's page to the
+  // list). A page that reports its layers is decided at once from its last
+  // report: a close is sent without waiting, and the page reports its new
+  // state for the next Back, so two quick presses are two steps. A page that
+  // never reported (an older Kivotos) is asked, with a timeout. A page whose
+  // shell is not up, or behind the offline card, has nothing open to close.
   const failed = failure !== null;
   const leave = useCallback(() => {
     if (canGoBack.current) web.current?.goBack();
     else onBack(viewKey);
   }, [viewKey, onBack]);
   const onHardwareBack = useCallback((): boolean => {
-    // The page is still answering the last Back.
+    // An older page is still answering the last Back.
     if (backWait.current !== null) return true;
     if (failed || !shell.current || web.current === null) {
       leave();
       return true;
     }
+    const action = backAction(layers.current);
+    if (action === "leave") {
+      leave();
+      return true;
+    }
     backSeq.current += 1;
     const seq = backSeq.current;
+    if (action === "close") {
+      closeSeq.current = seq;
+      web.current.injectJavaScript(closeScript(seq));
+      return true;
+    }
     backWait.current = setTimeout(() => {
       backWait.current = null;
       if (seq === backSeq.current) leave();
@@ -233,11 +254,18 @@ export const MachineView = memo(function MachineView(props: Props) {
     (event: WebViewMessageEvent) => {
       const message = parseBridgeMessage(event.nativeEvent.data);
       if (message === null) return;
+      if (message.type === "kivotos.layers") {
+        layers.current = message.open;
+        return;
+      }
       if (message.type === "kivotos.back") {
-        // Only the answer to the Back still waiting counts.
-        if (message.seq !== backSeq.current || backWait.current === null) return;
-        clearTimeout(backWait.current);
-        backWait.current = null;
+        // Only the answer to the last Back counts.
+        if (message.seq !== backSeq.current) return;
+        if (backWait.current !== null) {
+          clearTimeout(backWait.current);
+          backWait.current = null;
+        } else if (message.seq !== closeSeq.current) return;
+        // A close that found nothing left open (the report was a step behind): leave.
         if (!message.handled) leave();
         return;
       }
@@ -280,6 +308,7 @@ export const MachineView = memo(function MachineView(props: Props) {
   const onLoadStart = useCallback(() => {
     ready.current = false;
     shell.current = false;
+    layers.current = undefined;
     // A page mounted hidden (loaded ahead): its WebView may not have existed when the effect ran.
     applyVisible();
     onLoad(viewKey);
