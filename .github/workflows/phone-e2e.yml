@@ -13,6 +13,7 @@ on:
     paths:
       - "packages/mobile/**"
       - "packages/kivotos/src/client.tsx"
+      - "packages/kivotos/src/attention.ts"
       - "packages/kivotos/src/dsh/frame.ts"
       - "scripts/dev.mjs"
       - ".github/workflows/phone-e2e.yml"
@@ -26,9 +27,24 @@ permissions:
 
 jobs:
   phone-e2e:
-    name: phone e2e (API 35)
+    # API 35 runs every state; there the Live Update states check that nothing
+    # changed. Android 16 QPR1 (system image 36.1) runs the Live Update states,
+    # where the notification must be promoted, and keeps their screenshots.
+    name: phone e2e (API ${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "35"
+            api: "35"
+            image: "35"
+            only: ""
+          - name: "36.1"
+            api: "36"
+            image: "36.1"
+            only: "--only live-running,live-waiting,live-finished,live-off --expect-live"
     env:
       EXPO_NO_TELEMETRY: "1"
     steps:
@@ -87,9 +103,18 @@ jobs:
       - name: Run the e2e
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ matrix.api }}
+          system-image-api-level: ${{ matrix.image }}
           target: google_apis
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
-          script: npm run e2e:phone -- --apk packages/mobile/android/app/build/outputs/apk/release/app-release.apk --timeout-scale 2
+          script: npm run e2e:phone -- --apk packages/mobile/android/app/build/outputs/apk/release/app-release.apk --timeout-scale 2 --shots e2e-shots ${{ matrix.only }}
+
+      - name: Upload the Live Update screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phone-e2e-shots-api-${{ matrix.name }}
+          path: e2e-shots
+          if-no-files-found: ignore

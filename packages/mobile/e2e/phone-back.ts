@@ -16,10 +16,8 @@ import { parseArgs } from "node:util";
 import { Page, pageTargets } from "./cdp.ts";
 import { attachedSerials, Device, emulatorFor, type Booted } from "./device.ts";
 import { Lab, freePort, prepareMock, resolveDsh } from "./lab.ts";
-import { formatTable, machineRows, type Result, type UiNode } from "./lib.ts";
-
-const PACKAGE = "com.rinai.kivotos";
-const ACTIVITY = `${PACKAGE}/.MainActivity`;
+import { LIVE_CASES } from "./live.ts";
+import { ACTIVITY, formatTable, machineRows, PACKAGE, type Result, type UiNode } from "./lib.ts";
 
 const USAGE = `Usage: npm run e2e:phone -- --apk PATH [options]
 
@@ -40,6 +38,11 @@ Run the hardware Back e2e on an emulator or device against a fresh lab.
                         the device through adb reverse; any other address
                         must be one both this host and the device reach
   --only IDS            run only these states (comma-separated ids)
+  --shots DIR           save the Live Update cases' screenshots (the status
+                        bar chip and the shade) into DIR
+  --expect-live         the device must promote the Live Update: the Live
+                        Update states fail on an Android without them
+                        instead of checking that nothing changed
   --timeout-scale N     multiply every wait (default: $E2E_TIMEOUT_SCALE or 1)
   -h, --help            show this help`;
 
@@ -55,7 +58,12 @@ interface Options {
   relayHost: string;
   only?: string[];
   scale: number;
+  shots?: string;
+  expectLive: boolean;
 }
+
+/** The Live Update states' options. */
+type Live = Pick<Options, "shots" | "expectLive">;
 
 function parseOptions(): Options {
   let values;
@@ -70,6 +78,8 @@ function parseOptions(): Options {
         plugin: { type: "string" },
         "relay-host": { type: "string", default: "127.0.0.1" },
         only: { type: "string" },
+        shots: { type: "string" },
+        "expect-live": { type: "boolean", default: false },
         "timeout-scale": { type: "string" },
         help: { type: "boolean", short: "h", default: false },
       },
@@ -100,6 +110,8 @@ function parseOptions(): Options {
     relayHost: values["relay-host"],
     only,
     scale,
+    shots: values.shots === undefined ? undefined : path.resolve(values.shots),
+    expectLive: values["expect-live"],
   };
 }
 
@@ -247,16 +259,20 @@ class Run {
   readonly device: Device;
   readonly lab: Lab;
   readonly scale: number;
+  readonly shots: string | undefined;
+  readonly expectLive: boolean;
   private readonly cdpPort: number;
   private page: Page | undefined;
   private row: UiNode | undefined;
   private counter = 0;
 
-  constructor(device: Device, lab: Lab, cdpPort: number, scale: number) {
+  constructor(device: Device, lab: Lab, cdpPort: number, scale: number, live: Live) {
     this.device = device;
     this.lab = lab;
     this.cdpPort = cdpPort;
     this.scale = scale;
+    this.shots = live.shots;
+    this.expectLive = live.expectLive;
   }
 
   ms(base: number): number {
@@ -950,6 +966,7 @@ const CASES: Case[] = [
       return `opened ${opened.join(", ")}; no compat notice (DOM, text, observer); no "slot entry crashed" (page text, ${run.consoleLines().length} console lines)`;
     },
   },
+  ...LIVE_CASES,
 ];
 
 async function joinNetwork(device: Device, invite: string, scale: number): Promise<void> {
@@ -1099,7 +1116,7 @@ async function main(): Promise<number> {
 
     const cdpPort = await freePort();
     cleanups.push(["adb forward", () => device.adb(["forward", "--remove", `tcp:${cdpPort}`])]);
-    const run = new Run(device, lab, cdpPort, options.scale);
+    const run = new Run(device, lab, cdpPort, options.scale, options);
 
     const results: Result[] = [];
     const chosen = CASES.filter((each) => options.only?.includes(each.id) ?? true);

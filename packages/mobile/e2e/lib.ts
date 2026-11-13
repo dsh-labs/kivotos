@@ -2,12 +2,18 @@
 // so test/e2e-lib.test.ts can cover them without a device.
 import { zstdDecompressSync } from "node:zlib";
 
+/** The app under test. */
+export const PACKAGE = "com.rinai.kivotos";
+export const ACTIVITY = `${PACKAGE}/.MainActivity`;
+
 /** One node of a `uiautomator dump`. */
 export interface UiNode {
   text: string;
   desc: string;
   className: string;
   focused: boolean;
+  /** A switch's or checkbox's state. */
+  checked: boolean;
   /** [left, top, right, bottom] in screen pixels. */
   bounds: [number, number, number, number];
 }
@@ -45,6 +51,7 @@ export function parseUiNodes(xml: string): UiNode[] {
       desc: attrs.get("content-desc") ?? "",
       className: attrs.get("class") ?? "",
       focused: attrs.get("focused") === "true",
+      checked: attrs.get("checked") === "true",
       bounds: [Number(box[1]), Number(box[2]), Number(box[3]), Number(box[4])],
     });
   }
@@ -257,4 +264,48 @@ export function formatTable(results: Result[]): string {
   return [line(header), line(widths.map((width) => "-".repeat(width))), ...rows.map(line)].join(
     "\n",
   );
+}
+
+/** One posted notification, as `dumpsys notification --noredact` shows it. */
+export interface PostedNotification {
+  channel: string;
+  /** The symbolic flags (`ONGOING_EVENT`, `FOREGROUND_SERVICE`, `PROMOTED_ONGOING`, …). */
+  flags: string[];
+  title: string;
+  text: string;
+  /** `android.shortCriticalText`: the status-bar chip's text; "" when unset. */
+  chip: string;
+  /** `android.showChronometer`: the chip counts up from `when`. */
+  chronometer: boolean;
+}
+
+/**
+ * @returns the notifications of `pkg` with `id` in a `dumpsys notification
+ *   --noredact` dump, the first of each record (the dump lists a record in
+ *   more than one section).
+ */
+export function postedNotifications(dump: string, pkg: string, id?: number): PostedNotification[] {
+  const found = new Map<string, PostedNotification>();
+  const blocks = dump.split(/\n(?=\s*NotificationRecord\()/);
+  for (const block of blocks) {
+    const head =
+      /NotificationRecord\(0x[0-9a-f]+: pkg=(\S+) user=\S+ id=(-?\d+) .*?key=(\S+): Notification\(channel=(\S+) .*? flags=(\S+)/.exec(
+        block,
+      );
+    if (head === null || head[1] !== pkg || (id !== undefined && Number(head[2]) !== id)) continue;
+    if (found.has(head[3])) continue;
+    // Only the record's own extras, not its public version's.
+    const own = block.split(/\n\s*publicNotification=/)[0];
+    const extra = (name: string) =>
+      new RegExp(`\\n\\s*${name.replaceAll(".", "\\.")}=\\w+ \\((.*)\\)\\n`).exec(own)?.[1] ?? "";
+    found.set(head[3], {
+      channel: head[4],
+      flags: head[5].split("|"),
+      title: extra("android.title"),
+      text: extra("android.text"),
+      chip: extra("android.shortCriticalText"),
+      chronometer: extra("android.showChronometer") === "true",
+    });
+  }
+  return [...found.values()];
 }
