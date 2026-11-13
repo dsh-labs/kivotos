@@ -16,16 +16,16 @@ export interface Rewritten {
 
 const VIEWPORT_FROM = '<meta name="viewport" content="width=device-width, initial-scale=1" />';
 const VIEWPORT_TO =
-  '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />';
+  '<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />';
 const VIEWPORT_ANY = /<meta\s[^>]*\bname=["']?viewport\b/i;
 
 /**
- * Let the page draw under the phone's safe areas (notch, home indicator).
- * Point `viewport`.
+ * Let the phone's keyboard resize the page, so dsh's composer stays above it
+ * instead of under it. Point `viewport`.
  * @param html - the index as dsh served it.
- * @returns the page with a safe-area viewport, or unchanged.
+ * @returns the page with a keyboard-resizing viewport, or unchanged.
  */
-export function coverViewport(html: string): Rewritten {
+export function keyboardViewport(html: string): Rewritten {
   if (html.includes(VIEWPORT_TO))
     return { html, probe: ok("the viewport meta is already rewritten") };
   if (html.includes(VIEWPORT_FROM)) {

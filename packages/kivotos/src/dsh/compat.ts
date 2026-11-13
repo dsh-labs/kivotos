@@ -7,8 +7,8 @@
  *   boot gate, transport global);
  * - `desktop.ts`: the desktop shell's boot bridge;
  * - `sessions.ts`: dsh's current-Session store and its localStorage keys;
- * - `frame.ts`: the rendered frame, conversation and Settings panel the phone
- *   stylesheet positions;
+ * - `frame.ts`: the rendered frame and conversation the client module reads
+ *   and the phone stylesheet adjusts;
  * - `web-server.ts`: dsh's own paths and asset naming.
  *
  * `src/dsh/` is the only place that may know a dsh internal; everything else
@@ -25,7 +25,7 @@ export const PINNED_DSH = "0.2.2-rc.2";
 
 /** Every place Kivotos relies on a dsh internal, in notice order. */
 export const COMPAT_POINTS = [
-  /** The safe-area viewport rewrite of the served index. */
+  /** The keyboard-resizing viewport rewrite of the served index. */
   "viewport",
   /** The credentialed manifest rewrite of a mounted page's index. */
   "manifest",
@@ -33,12 +33,8 @@ export const COMPAT_POINTS = [
   "boot-graph",
   /** The desktop guard of a mounted page (boot gate and the shell's handshake). */
   "desktop-boot",
-  /** The phone drawer layout of dsh's frame. */
-  "phone-layout",
-  /** The phone spacing of the conversation header, composer and scroller. */
+  /** The phone's welcome hero and conversation scroller. */
   "phone-conversation",
-  /** The full-screen phone Settings panel. */
-  "phone-settings",
   /** Opening a machine on a Session (`localStorage["dsh.sessions.current"]`). */
   "session-store",
 ] as const;
@@ -211,43 +207,57 @@ export class CompatWatch {
 }
 
 /**
+ * How long a page probe must keep failing, reading after reading, before the
+ * failure stands: longer than dsh's mount and transition frames (its slow
+ * transition is 240 ms), short enough that a real change is reported while
+ * the page is still being looked at.
+ */
+export const PAGE_SETTLE_MS = 1_000;
+
+/**
  * Settles the page's own probes. A page probe reads a live page, which can be
- * caught between two renders, so:
+ * caught mid-render, mid-mount or mid-transition, so:
  *
  * - a probe answers undefined while its subject is not on the page (no
- *   Settings panel open, no Session selected), and is asked again later;
+ *   conversation yet, no Session selected), and is asked again later;
  * - `ok` settles the point at once;
- * - a failure settles it only when the next reading, taken in a later frame,
- *   agrees.
+ * - a failure settles it only when every reading for {@link PAGE_SETTLE_MS}
+ *   agrees: an `ok` reading, or the subject leaving the page, starts over.
  *
  * A settled point is not asked again: dsh does not change shape under a page,
  * and a feature that went off stays off rather than flickering.
  */
 export class PageVerdicts {
   private readonly settled: Partial<Record<CompatPoint, Probe>> = {};
-  private readonly pending: Partial<Record<CompatPoint, Probe>> = {};
+  /** When each point's current run of failed readings began. */
+  private readonly failingSince: Partial<Record<CompatPoint, number>> = {};
 
   /**
    * @param readings - this reading of the points still open; undefined ones
-   *   are not judged yet.
+   *   are not on the page.
+   * @param now - the reading's time, in milliseconds.
    * @returns whether anything was settled by it.
    */
-  read(readings: CompatReport): boolean {
+  read(readings: CompatReport, now: number): boolean {
     let settledAny = false;
     for (const point of COMPAT_POINTS) {
+      if (this.settled[point] !== undefined) continue;
       const probe = readings[point];
-      if (probe === undefined || this.settled[point] !== undefined) continue;
-      if (probe.state === "ok" || this.pending[point] !== undefined) {
+      if (probe === undefined || probe.state === "ok") delete this.failingSince[point];
+      if (probe === undefined) continue;
+      const since = (this.failingSince[point] ??= now);
+      if (probe.state === "ok" || now - since >= PAGE_SETTLE_MS) {
         this.settled[point] = probe;
+        delete this.failingSince[point];
         settledAny = true;
-      } else {
-        this.pending[point] = probe;
       }
     }
-    for (const point of COMPAT_POINTS) {
-      if (readings[point]?.state === "ok") delete this.pending[point];
-    }
     return settledAny;
+  }
+
+  /** @returns whether a point has failed readings that have not settled yet. */
+  isFailing(): boolean {
+    return Object.keys(this.failingSince).length > 0;
   }
 
   /** @returns whether the point has its answer. */
