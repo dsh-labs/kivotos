@@ -96,15 +96,29 @@ async function disabledReason(run: LiveRun): Promise<string | undefined> {
   if (live.enabled) return undefined;
   const reason = () =>
     nodes.find((node) => node.text === NO_LIVE || node.text.startsWith(BLOCKED))?.text;
-  if (reason() === undefined) {
-    // The reason sits under the switch, below the fold of a small screen.
-    const [left, top, right] = live.bounds;
-    const x = Math.round((left + right) / 2);
-    await run.device.shell(`input swipe ${x} ${top} ${x} ${Math.max(0, top - 600)} 300`);
+  // The reason sits under the switch, below the fold of a short screen (or
+  // under the keyboard): hide the keyboard and scroll the list to its end.
+  const [left, , right] = live.bounds;
+  const x = Math.round((left + right) / 2);
+  const size = /(\d+)x(\d+)/.exec(await run.device.shell("wm size"));
+  const height = size === null ? 1600 : Number(size[2]);
+  for (let attempt = 0; attempt < 3 && reason() === undefined; attempt++) {
+    if (attempt === 0) await run.device.hideKeyboard().catch(() => {});
+    else {
+      await run.device.shell(
+        `input swipe ${x} ${Math.round(height * 0.7)} ${x} ${Math.round(height * 0.2)} 400`,
+      );
+    }
+    await sleep(800);
     nodes = await run.device.ui();
   }
   const shown = reason();
-  if (shown === undefined) throw new Error("the Live updates switch is disabled without a reason");
+  if (shown === undefined) {
+    const texts = nodes.map((node) => node.text).filter((text) => text !== "");
+    throw new Error(
+      `the Live updates switch is disabled without a reason; on screen: ${JSON.stringify(texts)}`,
+    );
+  }
   return shown;
 }
 
