@@ -4,6 +4,10 @@ CI publishes the section that matches a pushed `v<version>` tag as the descripti
 
 ## Unreleased
 
+### Breaking changes
+
+- DeepSeek Harness 0.2.1 is no longer supported: `engines.dsh` is now `>=0.2.2-rc.1 <0.3.0-0` (it was `>=0.2.1-rc.5 <0.3.0-0`). Kivotos now relies on dsh's own phone layout, which 0.2.2-rc.1 introduced (the sidebar drawer with its opener, mask and close on select, the full-screen Settings panel); 0.2.1-rc.5 has none of it, and Kivotos no longer carries its own. dsh checks the range itself: on an older dsh, installing this version is refused as `incompatible-version`, and an already-installed copy is disabled at startup with a `disabling profile plugin` line on stderr, unless the exact version is exempted with `dsh plugin allow-version`. Upgrade dsh to 0.2.2-rc.1 or later, or stay on Kivotos 0.6.2.
+
 ### Fixes
 
 - Opening Settings on a phone no longer shows "Part of dsh changed, so Kivotos turned off: Full-screen Settings on phones". The notice was not a glitch: since 0.2.2-rc.1 dsh lays out Settings for a phone itself and dropped the `_content` wrapper the probe asked for, so the probe failed on every open, in every section. Kivotos' phone Settings stylesheet and its probe are gone; dsh's own full-screen panel stays.
@@ -15,8 +19,13 @@ CI publishes the section that matches a pushed `v<version>` tag as the descripti
 - Kept, because dsh does not do them: the welcome page's hero pinned near the top of a phone's screen, a conversation scroller that does not drag the page, touch rules, and Enter as a line break in the phone's composer.
 - The served viewport no longer extends under the phone's cutout (`viewport-fit=cover` is dropped; `interactive-widget=resizes-content` stays), so the page pads no safe area itself: a phone's browser keeps the page inside it, and the app's shell already pads its WebView.
 
+### Compatibility
+
+- DeepSeek Harness `>=0.2.2-rc.1 <0.3.0-0` (verified on 0.2.2-rc.1 and 0.2.2-rc.2). A mounted peer may still run an older Kivotos on an older dsh; the relay and the Android app are unchanged.
+
 ### 中文
 
+- 不兼容变更：不再支持 DeepSeek Harness 0.2.1，`engines.dsh` 改为 `>=0.2.2-rc.1 <0.3.0-0`（原为 `>=0.2.1-rc.5 <0.3.0-0`）。Kivotos 现在依赖 dsh 自带的手机布局（抽屉侧边栏及其打开按钮、遮罩、选中后收起，全屏 Settings），该布局从 0.2.2-rc.1 开始提供，0.2.1-rc.5 没有，而 Kivotos 已不再自带。范围由 dsh 自己检查：在旧版 dsh 上安装此版本会以 `incompatible-version` 拒绝，已安装的副本在启动时被停用（stderr 输出 `disabling profile plugin`），除非用 `dsh plugin allow-version` 豁免该确切版本。请升级到 dsh 0.2.2-rc.1 或更高版本，或继续使用 Kivotos 0.6.2。
 - 修复：手机上打开 Settings 不再提示「dsh 的内部结构有变，Kivotos 已停用：手机全屏设置页」。dsh 自 0.2.2-rc.1 起自带手机版 Settings 并移除了探测所需的 `_content` 包装层，探测每次打开都会失败。Kivotos 的手机 Settings 样式和探测已删除，使用 dsh 自己的全屏面板。
 - 修复：页面探测的失败需要持续一秒、连续多次读数一致才会停用功能，面板挂载或动画中的瞬间状态不再触发提示。
 - 变更：手机布局交给 dsh 自己：抽屉侧边栏、打开按钮、遮罩、选中后收起、全屏 Settings、手机上不自动聚焦输入框，dsh 0.2.2-rc.2 均已自带。Kivotos 删除了对应的抽屉样式、抽屉按钮（之前与 dsh 的按钮重叠）、遮罩、选中收起、Settings 样式和输入框聚焦拦截，以及 `phone-layout`、`phone-settings` 兼容点。保留 dsh 没有的部分：欢迎页置顶、会话滚动不带动页面、触控规则、手机输入框回车换行。视口不再使用 `viewport-fit=cover`，页面不再自行留出安全区域。

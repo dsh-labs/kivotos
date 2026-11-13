@@ -4,7 +4,7 @@ Guidance for coding agents working in this repository.
 
 ## What this repository is
 
-Kivotos is a plugin for DeepSeek Harness (dsh) 0.2.2-rc.2. Package `kivotos` in `packages/kivotos/`. TypeScript sources in `src/`, built with esbuild into `dist/`; no runtime dependencies.
+Kivotos is a plugin for DeepSeek Harness (dsh) 0.2.2-rc.2. Package `kivotos` in `packages/kivotos/`. TypeScript sources in `src/`, built with esbuild into `dist/`; no runtime dependencies. The plugin manifest's `engines.dsh` declares the supported range, `>=0.2.2-rc.1 <0.3.0-0`: its floor is the first dsh with its own phone layout, which Kivotos relies on and no longer replaces. dsh enforces the range itself: an install into a dsh outside it is refused (`incompatible-version`) and an installed copy is disabled at startup, unless that exact version is exempted with `dsh plugin allow-version`.
 
 Kivotos has no UI of its own for sessions. It adds four things:
 
@@ -175,7 +175,7 @@ Kivotos proxies dsh's own UI, so it relies on some dsh 0.2.2-rc.2 internals that
 
 Every function that relies on an internal probes it in the same place it uses it, so the two cannot disagree: a rewrite returns `{ html, probe }` and leaves the page as dsh served it when the probe fails; the phone stylesheet is built from `frame.ts` `PARTS`, and a test fails if it uses a selector that is not a declared part.
 
-The phone stylesheet is a deliberate, version-pinned exception to the dsh plugin rule "do not read another plugin's DOM": no slot owns the conversation's scroller. It matches CSS-module class suffixes (`[class*="_viewArea"]`; the prefix is a build hash) and data attributes, in one group for its point; its rules on plain elements (touch, inputs, document overscroll) read no dsh markup. dsh 0.2.2-rc.2 lays out the rest itself on a phone (AppFrame's drawer, SettingsRoot's full-screen panel); do not reposition its frame or Settings.
+The phone stylesheet is a deliberate, version-pinned exception to the dsh plugin rule "do not read another plugin's DOM": no slot owns the conversation's scroller. It matches CSS-module class suffixes (`[class*="_viewArea"]`; the prefix is a build hash) and data attributes, in one group for its point; its rules on plain elements (touch, inputs, document overscroll) read no dsh markup. dsh 0.2.2-rc.1 and later lay out the rest themselves on a phone (AppFrame's drawer, SettingsRoot's full-screen panel); do not reposition its frame or Settings.
 
 It unpins the welcome page: dsh centers the hero (logo, title and composer) that a screen with no Session messages shows, and a phone's tall screen turns that centering into a large blank above it. A phone therefore pins the hero near the top; a conversation with messages keeps dsh's layout.
 
@@ -196,7 +196,7 @@ A failed point turns off only its feature, logs once on the host, and shows a di
 
 `test/compat.test.ts` runs the index rewrites against `test/fixtures/dsh-0.2.2-rc.1.index.html` and `test/fixtures/dsh-0.2.2-rc.2.index.html` (each the index that release serves, byte for byte; excluded from formatting) and altered copies of the pinned one, and the page probes against the 0.2.2-rc.2 frame and conversation markup (captured at 390px) and renamed copies. `scripts/dsh-compat.mjs` installs dsh from npm into a scratch directory, installs this checkout's plugin into a scratch `DSH_HOME`, boots `dsh web` relay-only, signs in, and checks that the plugin applied, that every index rewrite's probe passes on the served index, and that every adapter `MARKERS` string is still in dsh's bundles. `.github/workflows/dsh-compat.yml` runs it nightly (and on changes to it) against the npm `latest` and `next` dist-tags — the rc line the desktop app ships, never `alpha`.
 
-On a dsh upgrade: run `node scripts/dsh-compat.mjs --tag <tag>`, fix what fails inside `src/dsh/`, re-capture the fixture.
+On a dsh upgrade: run `node scripts/dsh-compat.mjs --tag <tag>`, fix what fails inside `src/dsh/`, re-capture the fixture. Raise the `engines.dsh` floor when Kivotos starts relying on something the floor release lacks.
 
 ## Safe restart
 
