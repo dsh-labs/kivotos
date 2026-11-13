@@ -19,7 +19,7 @@ import {
   type PhoneProbe,
   type RouteMode,
 } from "../../kivotos/src/machines";
-import type { Machine } from "../modules/kivotos-attention/src/KivotosAttentionModule";
+import type { LiveUpdates, Machine } from "../modules/kivotos-attention/src/KivotosAttentionModule";
 import { ChevronGlyph, KivotosMark, MonitorGlyph, QrGlyph } from "./icons";
 import { MachineSheet } from "./MachineSheet";
 import { resolveMachines } from "./machines";
@@ -34,6 +34,8 @@ interface Props {
   probe: PhoneProbe | null;
   notifications: "on" | "off" | "denied";
   batteryRestricted: boolean;
+  /** Android 16 Live Updates: the switch, or why Android has none. */
+  liveUpdates: LiveUpdates;
   onAdd: (machines: Machine[]) => void;
   onRemove: (id: string) => void;
   /** Set how the phone reaches a machine. */
@@ -41,6 +43,9 @@ interface Props {
   onOpen: (machine: Machine) => void;
   onToggleNotifications: () => void;
   onFixBattery: () => void;
+  onToggleLiveUpdates: () => void;
+  /** Open Android's Live Updates setting for the app. */
+  onFixLiveUpdates: () => void;
   onLinks: () => void;
 }
 
@@ -119,6 +124,54 @@ function EmptyCard() {
         </View>
       </View>
     </View>
+  );
+}
+
+interface LiveRowProps {
+  live: LiveUpdates;
+  notifications: Props["notifications"];
+  onToggle: () => void;
+  onFix: () => void;
+}
+
+/** The Live Updates switch; disabled, with why, when Android has none or does not allow them. */
+function LiveUpdatesRow({ live, notifications, onToggle, onFix }: LiveRowProps) {
+  const styles = useStyles(createStyles);
+  const colors = useColors();
+  const trackColor = useMemo(() => ({ false: colors.pressed, true: colors.link }), [colors]);
+  // Live Updates ride on the notifications' service, and need Android's leave.
+  const switchable = notifications === "on" && (live === "on" || live === "off");
+  let notice: Key | null = null;
+  if (live === "unsupported") notice = "liveUnsupported";
+  else if (live === "blocked") notice = "liveBlocked";
+  return (
+    <>
+      <Pressable
+        onPress={switchable ? onToggle : undefined}
+        disabled={!switchable}
+        style={notice === null ? styles.plain : styles.plainDivided}
+      >
+        <Text style={styles.plainName}>{t("liveUpdates")}</Text>
+        <Switch
+          value={live === "on" && notifications === "on"}
+          onValueChange={onToggle}
+          disabled={!switchable}
+          trackColor={trackColor}
+          thumbColor="#FFFFFF"
+          accessibilityLabel={t("liveUpdates")}
+        />
+      </Pressable>
+      {notice === null ? null : (
+        <View style={styles.notice}>
+          <Text style={styles.noticeText}>{t(notice)}</Text>
+          {live === "blocked" ? (
+            <Pressable onPress={onFix} hitSlop={8} accessibilityRole="button">
+              <Text style={styles.link}>{t("liveFix")}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      )}
+    </>
   );
 }
 
@@ -330,10 +383,7 @@ export function MachineList(props: Props) {
             </Text>
             <ChevronGlyph color={colors.textTertiary} />
           </Pressable>
-          <Pressable
-            onPress={props.onToggleNotifications}
-            style={notice === null ? styles.plain : styles.plainDivided}
-          >
+          <Pressable onPress={props.onToggleNotifications} style={styles.plainDivided}>
             <Text style={styles.plainName}>{t("notifications")}</Text>
             <Switch
               value={props.notifications === "on"}
@@ -344,7 +394,7 @@ export function MachineList(props: Props) {
             />
           </Pressable>
           {notice === null ? null : (
-            <View style={styles.notice}>
+            <View style={styles.noticeDivided}>
               <Text style={styles.noticeText}>{notice}</Text>
               {props.notifications === "on" ? (
                 <Pressable onPress={props.onFixBattery} hitSlop={8} accessibilityRole="button">
@@ -353,6 +403,12 @@ export function MachineList(props: Props) {
               ) : null}
             </View>
           )}
+          <LiveUpdatesRow
+            live={props.liveUpdates}
+            notifications={props.notifications}
+            onToggle={props.onToggleLiveUpdates}
+            onFix={props.onFixLiveUpdates}
+          />
         </View>
       </ScrollView>
       <MachineSheet
@@ -514,6 +570,14 @@ function createStyles(c: Palette) {
       gap: 12,
       paddingVertical: 12,
       paddingHorizontal: 14,
+    },
+    noticeDivided: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      ...divider,
     },
     noticeText: { flex: 1, fontSize: 13, lineHeight: 18, color: c.textSecondary },
     link: { fontSize: 14, fontWeight: "600", color: c.link },
