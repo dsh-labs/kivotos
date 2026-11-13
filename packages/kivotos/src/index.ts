@@ -27,7 +27,7 @@ import { CompatWatch, injectCompatReport, injectHead, type CompatReport } from "
 import { guardDesktopBoot } from "./dsh/desktop.ts";
 import {
   bootGraphOf,
-  coverViewport,
+  keyboardViewport,
   credentialedManifest,
   injectOwnsHost,
 } from "./dsh/index-html.ts";
@@ -328,7 +328,7 @@ export const Config = { "~standard": { version: 1, vendor: "kivotos", validate }
  * @returns html to serve, carrying the failed probe for the client module.
  */
 function hostIndex(html: string, compat: CompatWatch): string {
-  const viewport = coverViewport(html);
+  const viewport = keyboardViewport(html);
   const report: CompatReport = { viewport: viewport.probe };
   compat.observe(report);
   return injectCompatReport(viewport.html, report);

@@ -3,9 +3,9 @@
  *
  * - `sidebar.footer.action`: machine switcher. It lists the serving host and
  *   the peers it mounts under `/kivotos/peer/<id>/`, and navigates between them.
- * - `conversation.header.leading`: drawer toggle, shown only on phones.
- * - `shell.overlay`: drawer backdrop plus the plugin's stylesheet. The
- *   stylesheet renders as a React element, so unmounting the plugin removes it.
+ * - `shell.overlay`: the plugin's stylesheet, with the phone rules dsh's own
+ *   phone layout lacks (dsh/frame.ts). The stylesheet renders as a React
+ *   element, so unmounting the plugin removes it.
  * - `settings.section`: "Remote access", this machine's links and the
  *   machines it knows, with their modes (settings.tsx).
  *
@@ -42,23 +42,17 @@ import { hidePeerOpenInApp } from "./dsh/open-in-app.ts";
 import { sessionFileAddress } from "./dsh/files.ts";
 import { peerFileIntake } from "./dsh/peer-files.ts";
 import {
-  APP_SAFE_AREA,
   closeLayer,
-  onSessionRowTap,
   openLayer,
   PARTS,
   phoneStylesheet,
   plainEnter,
   probePhoneConversation,
-  probePhoneLayout,
-  probePhoneSettings,
   shellRendered,
-  watchSidebarCollapsed,
 } from "./dsh/frame.ts";
 import {
   currentSession,
   probeSessionStore,
-  rawSelection,
   selectSession,
   SESSION_FRAGMENT,
 } from "./dsh/sessions.ts";
@@ -93,7 +87,6 @@ interface ClientContext {
     register(ns: string, dictionaries: Record<string, Record<string, string>>): () => void;
     bind(ns: string): Translate;
   };
-  layout: { toggleSidebar(): void };
   /** File-extension renderers (dsh-client-ui-sidebar-documentpreview). */
   documentPreviews?: {
     register(definition: {
@@ -159,18 +152,14 @@ const ZH = {
   "attention.done": "{name}：任务已完成",
   "attention.failed": "{name}：任务失败",
   "attention.untitled": "未命名会话",
-  "drawer.open": "打开侧边栏",
-  "drawer.close": "关闭侧边栏",
   "compat.notice": "dsh 的内部结构有变，Kivotos 已停用：{features}。",
   "compat.separator": "、",
   "compat.dismiss": "知道了",
-  "compat.viewport": "手机安全区域布局",
+  "compat.viewport": "手机键盘适配布局",
   "compat.manifest": "被挂载机器的 Web 清单",
   "compat.bootGraph": "被挂载机器的缓存预热",
   "compat.desktopBoot": "桌面应用中的其它机器",
-  "compat.phoneLayout": "手机抽屉布局",
-  "compat.phoneConversation": "手机上的会话页边距",
-  "compat.phoneSettings": "手机全屏设置页",
+  "compat.phoneConversation": "手机上的欢迎页与会话滚动",
   "compat.sessionStore": "按会话打开机器",
   "machines.blockedDesktop": "已停用：桌面应用的启动方式已变化",
   "preview.audio": "音频",
@@ -199,18 +188,14 @@ const EN: Record<keyof typeof ZH, string> = {
   "attention.done": "{name}: task finished",
   "attention.failed": "{name}: task failed",
   "attention.untitled": "Untitled session",
-  "drawer.open": "Open sidebar",
-  "drawer.close": "Close sidebar",
   "compat.notice": "Part of dsh changed, so Kivotos turned off: {features}.",
   "compat.separator": ", ",
   "compat.dismiss": "Dismiss",
-  "compat.viewport": "Safe-area layout on phones",
+  "compat.viewport": "Keyboard-aware layout on phones",
   "compat.manifest": "The web manifest of a mounted machine",
   "compat.bootGraph": "Cache warm-up for a mounted machine",
   "compat.desktopBoot": "Other machines in the desktop app",
-  "compat.phoneLayout": "The phone drawer layout",
-  "compat.phoneConversation": "Conversation spacing on phones",
-  "compat.phoneSettings": "Full-screen Settings on phones",
+  "compat.phoneConversation": "The welcome page and conversation scrolling on phones",
   "compat.sessionStore": "Opening a machine on a Session",
   "machines.blockedDesktop": "Off: the desktop app's boot changed",
   "preview.audio": "Audio",
@@ -223,7 +208,7 @@ const EN: Record<keyof typeof ZH, string> = {
   "files.cancel": "Cancel",
 };
 
-/** The machine switcher, the drawer toggle and the backdrop: Kivotos' own markup. */
+/** The machine switcher and the media previews: Kivotos' own markup. */
 const BASE_CSS = `
 .kivotos-machines{position:relative;display:flex;width:100%;margin:8px 0 0}
 .kivotos-machines-trigger{display:flex;align-items:center;gap:10px;box-sizing:border-box;width:calc(100% + 4px);min-height:48px;margin:0 -2px;padding:6px 10px 6px 14px;border:none;border-radius:12px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;line-height:20px;text-align:left;cursor:pointer;overflow:hidden}
@@ -252,9 +237,6 @@ const BASE_CSS = `
 .kivotos-attention-dot[data-tone="failed"]{background:var(--dsw-alias-state-error-primary)}
 .kivotos-attention-dot[data-tone="waiting"]{background:var(--dsw-alias-state-warn-primary)}
 .kivotos-machines-trigger[data-narrow] .kivotos-attention-dot{position:absolute;top:8px;right:8px;width:7px;height:7px}
-.kivotos-drawer-toggle{display:none;width:28px;height:28px;align-items:center;justify-content:center;margin-right:8px;padding:0;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
-.kivotos-drawer-toggle:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.kivotos-backdrop{position:fixed;inset:0;z-index:29;border:none;padding:0;background:var(--dsw-alias-bg-mask-1);cursor:default}
 .kivotos-audio{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;box-sizing:border-box;height:100%;min-height:240px;padding:24px}
 .kivotos-audio audio{width:min(520px,100%)}
 .kivotos-audio-label{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:18px}
@@ -296,7 +278,7 @@ const COMPAT_CSS = `
 `;
 /**
  * Where a point's feature does anything: the notice names a failure only
- * there. The phone layout and the safe-area viewport change nothing on a
+ * there. The phone rules and the keyboard-aware viewport change nothing on a
  * computer, and the desktop guard only runs inside the desktop app.
  */
 const FELT_ON: Record<CompatPoint, (phone: boolean, desktop: boolean) => boolean> = {
@@ -304,9 +286,7 @@ const FELT_ON: Record<CompatPoint, (phone: boolean, desktop: boolean) => boolean
   manifest: () => true,
   "boot-graph": () => true,
   "desktop-boot": (_phone, desktop) => desktop,
-  "phone-layout": (phone) => phone,
   "phone-conversation": (phone) => phone,
-  "phone-settings": (phone) => phone,
   "session-store": () => true,
 };
 /** This tab's last announced failures, so a navigation does not repeat the notice. */
@@ -318,9 +298,7 @@ const COMPAT_KEYS: Record<CompatPoint, keyof typeof EN> = {
   manifest: "compat.manifest",
   "boot-graph": "compat.bootGraph",
   "desktop-boot": "compat.desktopBoot",
-  "phone-layout": "compat.phoneLayout",
   "phone-conversation": "compat.phoneConversation",
-  "phone-settings": "compat.phoneSettings",
   "session-store": "compat.sessionStore",
 };
 
@@ -345,13 +323,6 @@ function useMedia(query: string): boolean {
     return () => list.removeEventListener("change", onChange);
   }, [query]);
   return matches;
-}
-
-/** Track whether dsh's sidebar is collapsed (dsh/frame.ts). */
-function useSidebarCollapsed(): boolean {
-  const [collapsed, setCollapsed] = useState(true);
-  useEffect(() => watchSidebarCollapsed(setCollapsed), []);
-  return collapsed;
 }
 
 /** The serving host's merged stream of the other machines' attention (attention-hub.ts). */
@@ -396,9 +367,7 @@ function useCompat(): CompatReport {
 
 /** The page probes, by the point each judges (dsh/frame.ts, dsh/sessions.ts). */
 const PAGE_PROBES = {
-  "phone-layout": () => probePhoneLayout(document),
   "phone-conversation": () => probePhoneConversation(document),
-  "phone-settings": () => probePhoneSettings(document),
   "session-store": () => probeSessionStore(window.localStorage, document),
 } satisfies Partial<Record<CompatPoint, () => unknown>>;
 /** The Session store changes without touching the DOM: read it this often as well. */
@@ -430,11 +399,11 @@ function watchCompat(): () => void {
       const probe = PAGE_PROBES[point as keyof typeof PAGE_PROBES]();
       if (probe !== undefined) readings[point] = probe;
     }
-    if (verdicts.read(readings)) publish();
+    if (verdicts.read(readings, performance.now())) publish();
     if (open().length === 0) stop();
-    // A failure waits for the next frame's reading to agree.
-    else if (Object.keys(readings).some((point) => !verdicts.isSettled(point as CompatPoint)))
-      schedule();
+    // A failure stands only once it has lasted (PageVerdicts): read again
+    // until it settles or clears.
+    else if (verdicts.isFailing()) schedule();
   };
   const schedule = (): void => {
     if (frame === 0) frame = requestAnimationFrame(read);
@@ -522,8 +491,8 @@ interface AppBridge {
  * an Escape would reject a pending approval or count toward stopping the
  * reply. A layer the Escape leaves open (the preview notice) does not keep
  * Back: that close answers false and the app leaves. Registered whenever
- * the app hosts the page, at any width and whatever the phone-layout probe
- * says: without the drawer layout there is simply no drawer to close.
+ * the app hosts the page, at any width: dsh lays out its drawer itself
+ * below 768px, and a wider page simply has no drawer to close.
  *
  * The page pushes what Back would close (`kivotos.layers`, `open`: how many
  * layers are open, or null) once here and then after every change, from the
@@ -732,54 +701,12 @@ function followAttention(t: Translate): () => void {
   };
 }
 
-/**
- * On a phone the drawer covers the conversation, so opening a Session from
- * it, or starting a new one, should close it, as native apps do; dsh's own
- * layout collapses the sidebar only on a width change. Two signals, because
- * neither covers every case:
- * - a tap on a Session row, which also catches the Session already open
- *   (dsh/frame.ts `onSessionRowTap`).
- * - a change of the current Session, which catches New Session and any
- *   other way dsh switches. The store writes synchronously in dsh's click
- *   handler, and same-document storage writes fire no event, so it is polled.
- * @param active - phone width with the drawer open.
- * @param close - collapses the drawer.
- */
-function useCloseDrawerOnSelect(active: boolean, close: () => void): void {
-  useEffect(() => {
-    if (!active) return undefined;
-    const stopTaps = onSessionRowTap(close);
-    const opened = rawSelection(window.localStorage);
-    const timer = setInterval(() => {
-      if (rawSelection(window.localStorage) !== opened) close();
-    }, 150);
-    return () => {
-      stopTaps();
-      clearInterval(timer);
-    };
-  }, [active, close]);
-}
-
 /** Monitor glyph (original artwork, currentColor). */
 function MachineGlyph(): ReactNode {
   return (
     <svg width={18} height={18} viewBox="0 0 20 20" fill="none" aria-hidden>
       <rect x={2.5} y={3.5} width={15} height={10} rx={2} stroke="currentColor" strokeWidth={1.4} />
       <path d="M7 16.5h6M10 13.5v3" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" />
-    </svg>
-  );
-}
-
-/** Drawer glyph (original artwork, currentColor). */
-function DrawerGlyph(): ReactNode {
-  return (
-    <svg width={16} height={16} viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M2.5 4h11M2.5 8h11M2.5 12h7"
-        stroke="currentColor"
-        strokeWidth={1.4}
-        strokeLinecap="round"
-      />
     </svg>
   );
 }
@@ -1350,78 +1277,7 @@ function MachineSwitcher({ wide, t }: { wide: boolean; t: Translate }): ReactNod
   );
 }
 
-export const inject = ["slots", "locale", "layout", "documentPreviews", "sidebarRight"];
-
-/** Slot props Kivotos injects next to the dsh-supplied ones. */
-interface Injected {
-  t: Translate;
-  toggleSidebar: () => void;
-}
-
-/**
- * Drawer toggle before the Session title; CSS shows it only on phones.
- *
- * The phone stylesheet is what makes this button visible, and it is withheld
- * when the frame it positions is not there (compat.ts, `phone-layout`): the
- * button would be a control for a layout that no longer exists.
- */
-function DrawerToggle({ t, toggleSidebar }: Injected): ReactNode {
-  const collapsed = useSidebarCollapsed();
-  const report = useCompat();
-  if (!usable(report, "phone-layout")) return null;
-  const label = collapsed ? t("drawer.open") : t("drawer.close");
-  return (
-    <button
-      type="button"
-      className="kivotos-drawer-toggle"
-      aria-label={label}
-      title={label}
-      aria-expanded={!collapsed}
-      onClick={toggleSidebar}
-    >
-      <DrawerGlyph />
-    </button>
-  );
-}
-
-/**
- * Kivotos' stylesheet, the phone layout it only applies when the frame it
- * positions is there, and the open-drawer backdrop.
- */
-/**
- * Keep dsh from opening the phone's keyboard when it focuses the composer by
- * itself. dsh 0.2.2-rc.2's `focusDraftEditor` (ui-conversation) focuses the
- * composer after a Session switch; on a desktop that is convenient, on a phone
- * it raises the soft keyboard over a Session the user only wanted to read.
- * A focus is allowed only when the last press was inside the composer, so a
- * tap on the composer still types as before.
- * @param active - the drawer layout applies (phone width, frame as pinned).
- */
-function usePhoneComposerFocus(active: boolean): void {
-  useEffect(() => {
-    if (!active) return undefined;
-    let fromComposer = false;
-    let pressedAt = 0;
-    const onPress = (event: Event): void => {
-      const target = event.target as Element | null;
-      fromComposer = target?.closest(PARTS.composer) !== null;
-      pressedAt = Date.now();
-    };
-    const onFocus = (event: FocusEvent): void => {
-      const target = event.target;
-      if (!(target instanceof HTMLElement) || target.closest(PARTS.composer) === null) return;
-      const typed = fromComposer && Date.now() - pressedAt < 1000;
-      fromComposer = false;
-      if (!typed) target.blur();
-    };
-    document.addEventListener("pointerdown", onPress, true);
-    document.addEventListener("focusin", onFocus, true);
-    return () => {
-      document.removeEventListener("pointerdown", onPress, true);
-      document.removeEventListener("focusin", onFocus, true);
-    };
-  }, [active]);
-}
+export const inject = ["slots", "locale", "documentPreviews", "sidebarRight"];
 
 /**
  * On a phone, Enter in the composer writes a line break instead of sending.
@@ -1430,7 +1286,7 @@ function usePhoneComposerFocus(active: boolean): void {
  * sent the draft (frame.ts, `plainEnter`). The keydown dsh acts on is re-sent
  * with Shift held, so dsh's own line-break path inserts the break; the
  * composer's send button still sends.
- * @param active - the drawer layout applies (phone width, frame as pinned).
+ * @param active - the page is on a phone.
  */
 function usePhoneComposerLineBreak(active: boolean): void {
   useEffect(() => {
@@ -1458,30 +1314,15 @@ function usePhoneComposerLineBreak(active: boolean): void {
   }, [active]);
 }
 
-function PhoneShell({ t, toggleSidebar }: Injected): ReactNode {
+function PhoneShell(): ReactNode {
   const phone = useMedia(PHONE);
-  const collapsed = useSidebarCollapsed();
   const report = useCompat();
-  const layout = usable(report, "phone-layout");
-  // The app's shell pads its WebView by the system insets already, so the page
-  // inside it pads 0; a phone's own browser pads the safe areas itself.
-  const safeArea = IN_APP ? APP_SAFE_AREA : undefined;
-  useCloseDrawerOnSelect(layout && phone && !collapsed, toggleSidebar);
   usePhoneBack();
-  usePhoneComposerFocus(layout && phone);
-  usePhoneComposerLineBreak(layout && phone);
+  usePhoneComposerLineBreak(phone);
   return (
     <>
       <style>{BASE_CSS + SETTINGS_CSS + hidePeerOpenInApp()}</style>
-      <style>{phoneStylesheet(report, PHONE, safeArea)}</style>
-      {layout && phone && !collapsed ? (
-        <button
-          type="button"
-          className="kivotos-backdrop"
-          aria-label={t("drawer.close")}
-          onClick={toggleSidebar}
-        />
-      ) : null}
+      <style>{phoneStylesheet(report, PHONE)}</style>
     </>
   );
 }
@@ -1865,9 +1706,6 @@ export function apply(ctx: ClientContext): void {
   // those files upload to it instead (dsh/peer-files.ts).
   if (currentPeer() !== null)
     ctx.effect(() => peerFileIntake() ?? (() => undefined), "kivotos: peer file intake");
-  // One stable function for every render, injected as a slot prop.
-  const injected = { toggleSidebar: (): void => ctx.layout.toggleSidebar() };
-  const props = (): typeof injected => injected;
   const section = { inApp: IN_APP };
   const sectionProps = (): typeof section => section;
 
@@ -1890,17 +1728,8 @@ export function apply(ctx: ClientContext): void {
       LinksSection,
     ),
   );
-  ctx.slots.inject("conversation.header.leading", () =>
-    ctx.slots.register(
-      { name: "conversation.header.leading", locale: NS, inject: props },
-      DrawerToggle,
-    ),
-  );
   ctx.slots.inject("shell.overlay", () =>
-    ctx.slots.register(
-      { name: "shell.overlay", id: "kivotos-phone", locale: NS, inject: props },
-      PhoneShell,
-    ),
+    ctx.slots.register({ name: "shell.overlay", id: "kivotos-phone", locale: NS }, PhoneShell),
   );
   ctx.slots.inject("shell.overlay", () =>
     ctx.slots.register({ name: "shell.overlay", id: "kivotos-compat", locale: NS }, CompatNotice),

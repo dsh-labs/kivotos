@@ -28,14 +28,6 @@ export interface SessionPage {
 
 /**
  * @param storage - the page's localStorage.
- * @returns the stored current Session's raw value, for change detection.
- */
-export function rawSelection(storage: SessionStorage): string | null {
-  return storage.getItem(CURRENT_SESSION_KEY);
-}
-
-/**
- * @param storage - the page's localStorage.
  * @returns the Session dsh shows on this page, "" when none or unreadable.
  */
 export function currentSession(storage: SessionStorage): string {

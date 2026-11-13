@@ -37,7 +37,7 @@ import { MARKERS as OPEN_IN_APP_MARKERS } from "../packages/kivotos/src/dsh/open
 import {
   MARKERS as INDEX_MARKERS,
   bootGraphOf,
-  coverViewport,
+  keyboardViewport,
   credentialedManifest,
 } from "../packages/kivotos/src/dsh/index-html.ts";
 import { MARKERS as SESSION_MARKERS } from "../packages/kivotos/src/dsh/sessions.ts";
@@ -168,8 +168,8 @@ async function check(tag) {
     const index = await (await get("/")).text();
     record(
       "plugin rewrote the index",
-      index.includes("viewport-fit=cover"),
-      "the viewport meta carries viewport-fit=cover",
+      index.includes("interactive-widget=resizes-content"),
+      "the viewport meta carries interactive-widget=resizes-content",
     );
     record(
       "plugin reported no host probe failure",
@@ -182,7 +182,7 @@ async function check(tag) {
     // The host's own rewrite has run on this index; a mounted page gets the
     // others, which are judged on the same index here.
     for (const [name, probe] of [
-      ["viewport", coverViewport(index).probe],
+      ["viewport", keyboardViewport(index).probe],
       ["manifest", credentialedManifest(index).probe],
       ["boot-graph", bootGraphOf(index).probe],
       ["desktop-boot", guardDesktopBoot(index, "/kivotos/peer/check").probe],

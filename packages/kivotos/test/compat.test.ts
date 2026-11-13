@@ -9,20 +9,18 @@ import {
   failedPoints,
   injectCompatReport,
   mergeCompat,
+  PAGE_SETTLE_MS,
   PageVerdicts,
   type CompatReport,
 } from "../src/dsh/compat.ts";
 import { guardDesktopBoot } from "../src/dsh/desktop.ts";
 import {
-  APP_SAFE_AREA,
   PARTS,
   phoneStylesheet,
   probePhoneConversation,
-  probePhoneLayout,
-  probePhoneSettings,
   type FrameNode,
 } from "../src/dsh/frame.ts";
-import { bootGraphOf, coverViewport, credentialedManifest } from "../src/dsh/index-html.ts";
+import { bootGraphOf, keyboardViewport, credentialedManifest } from "../src/dsh/index-html.ts";
 import {
   currentSession,
   injectStorageNamespace,
@@ -71,9 +69,10 @@ const GATE = "(globalThis.__DSH_BOOT_READY__ ??= Promise.withResolvers()).resolv
 test("every index rewrite applies to each pinned index", () => {
   for (const fixture of FIXTURES) {
     const release = `dsh ${fixture.version}`;
-    const viewport = coverViewport(fixture.index);
+    const viewport = keyboardViewport(fixture.index);
     assert.equal(viewport.probe.state, "ok", release);
-    assert.match(viewport.html, /viewport-fit=cover/);
+    assert.match(viewport.html, /interactive-widget=resizes-content/);
+    assert.doesNotMatch(viewport.html, /viewport-fit/);
     const manifest = credentialedManifest(fixture.index);
     assert.equal(manifest.probe.state, "ok", release);
     assert.match(manifest.html, /crossorigin="use-credentials"/);
@@ -99,8 +98,13 @@ test("every index rewrite applies to each pinned index", () => {
 
 test("a changed index is served as dsh sent it, and says which markup moved", () => {
   for (const [rewrite, from, to, state] of [
-    [coverViewport, VIEWPORT, '<meta name="viewport" content="width=device-width" />', "changed"],
-    [coverViewport, VIEWPORT, "", "missing"],
+    [
+      keyboardViewport,
+      VIEWPORT,
+      '<meta name="viewport" content="width=device-width" />',
+      "changed",
+    ],
+    [keyboardViewport, VIEWPORT, "", "missing"],
     [credentialedManifest, MANIFEST, '<link rel="manifest" href="/app.webmanifest" />', "changed"],
     [credentialedManifest, MANIFEST, "", "missing"],
   ] as const) {
@@ -128,11 +132,11 @@ test("a boot graph of another shape turns the warm-up off instead of feeding it"
 });
 
 test("only the failures travel to the page, and the page reads them back", () => {
-  assert.equal(injectCompatReport(PINNED, { viewport: coverViewport(PINNED).probe }), PINNED);
+  assert.equal(injectCompatReport(PINNED, { viewport: keyboardViewport(PINNED).probe }), PINNED);
   const broken = altered(MANIFEST, "");
   const report: CompatReport = {
     manifest: credentialedManifest(broken).probe,
-    viewport: coverViewport(broken).probe,
+    viewport: keyboardViewport(broken).probe,
   };
   const page = injectCompatReport(broken, report);
   const script = /<script>(Object\.assign\(globalThis\.__KIVOTOS_COMPAT__[^<]*)<\/script>/.exec(
@@ -176,24 +180,41 @@ test("two reports of one point keep the worse answer", () => {
   );
 });
 
-test("a page verdict settles on ok at once, on a failure only when it repeats, and then stays", () => {
+test("a page verdict settles on ok at once, and on a failure only once it has lasted", () => {
   const ok = { state: "ok", reason: "" } as const;
   const changed = { state: "changed", reason: "mid-render" } as const;
   const verdicts = new PageVerdicts();
-  // Nothing to judge yet, then one failure: neither settles.
-  assert.equal(verdicts.read({}), false);
-  assert.equal(verdicts.read({ "phone-settings": changed, "phone-layout": ok }), true);
-  assert.deepEqual(verdicts.report(), { "phone-layout": ok });
-  // A failure that does not repeat is forgotten.
-  verdicts.read({ "phone-settings": ok });
-  assert.deepEqual(verdicts.report(), { "phone-layout": ok, "phone-settings": ok });
+  // Nothing to judge yet, then failures within the settle time: nothing settles.
+  assert.equal(verdicts.read({}, 0), false);
+  assert.equal(verdicts.read({ "phone-conversation": changed, "session-store": ok }, 0), true);
+  assert.deepEqual(verdicts.report(), { "session-store": ok });
+  assert.equal(verdicts.read({ "phone-conversation": changed }, PAGE_SETTLE_MS - 1), false);
+  assert.ok(verdicts.isFailing());
+  // A failure that clears before then is forgotten.
+  verdicts.read({ "phone-conversation": ok }, PAGE_SETTLE_MS);
+  assert.deepEqual(verdicts.report(), { "session-store": ok, "phone-conversation": ok });
+  assert.ok(!verdicts.isFailing());
+
   const failing = new PageVerdicts();
-  failing.read({ "phone-layout": changed });
-  failing.read({ "phone-layout": changed });
-  assert.deepEqual(failing.report(), { "phone-layout": changed });
+  failing.read({ "phone-conversation": changed }, 0);
+  failing.read({ "phone-conversation": changed }, PAGE_SETTLE_MS);
+  assert.deepEqual(failing.report(), { "phone-conversation": changed });
+  assert.ok(!failing.isFailing());
   // Settled is final: a later reading changes nothing.
-  failing.read({ "phone-layout": ok });
-  assert.deepEqual(failing.report(), { "phone-layout": changed });
+  failing.read({ "phone-conversation": ok }, 2 * PAGE_SETTLE_MS);
+  assert.deepEqual(failing.report(), { "phone-conversation": changed });
+});
+
+test("a page failure starts over when its subject leaves the page", () => {
+  const changed = { state: "changed", reason: "unmounting" } as const;
+  const verdicts = new PageVerdicts();
+  verdicts.read({ "phone-conversation": changed }, 0);
+  // The subject left (the probe answered undefined), then came back failing.
+  verdicts.read({}, 500);
+  assert.ok(!verdicts.isFailing());
+  verdicts.read({ "phone-conversation": changed }, 900);
+  assert.equal(verdicts.read({ "phone-conversation": changed }, PAGE_SETTLE_MS + 100), false);
+  assert.equal(verdicts.read({ "phone-conversation": changed }, 900 + PAGE_SETTLE_MS), true);
 });
 
 /** A rendered element as the probes see it: tag, class, data attributes. */
@@ -214,177 +235,134 @@ function matches(node: Node, selector: string): boolean {
   return (node.tag ?? "div") === selector;
 }
 
-/** An element both the frame and the Session probes can read. */
+/** An element both the conversation and the Session probes can read. */
 interface TestNode extends FrameNode {
-  readonly children: TestNode[];
   querySelector(selectors: string): TestNode | null;
   getAttribute(name: string): string | null;
 }
 
-function element(node: Node, parent: TestNode | null): TestNode {
-  const self: TestNode = {
-    parentElement: parent,
-    tagName: (node.tag ?? "div").toUpperCase(),
-    get children() {
-      return (node.children ?? []).map((each) => element(each, self));
-    },
-    matches: (selector) => matches(node, selector),
-    querySelector: (selector) => find(node.children ?? [], selector, self),
+function element(node: Node): TestNode {
+  return {
+    querySelector: (selector) => find(node.children ?? [], selector),
     getAttribute: (name) => node.attrs?.[name] ?? null,
   };
-  return self;
 }
 
-function find(nodes: Node[], selector: string, parent: TestNode): TestNode | null {
+function find(nodes: Node[], selector: string): TestNode | null {
   for (const node of nodes) {
-    const self = element(node, parent);
-    if (matches(node, selector)) return self;
-    const deeper = find(node.children ?? [], selector, self);
+    if (matches(node, selector)) return element(node);
+    const deeper = find(node.children ?? [], selector);
     if (deeper !== null) return deeper;
   }
   return null;
 }
 
 function pageOf(...roots: Node[]): { querySelector(selectors: string): TestNode | null } {
-  const top = element({ children: roots }, null);
+  const top = element({ children: roots });
   return { querySelector: (selector) => top.querySelector(selector) };
 }
 
 const cls = (value: string): Record<string, string> => ({ class: value });
 
 /**
- * dsh 0.2.2-rc.2's AppFrame with a conversation, as rendered (ui-layout
- * AppFrame.module.css `pI_x6G_`, ui-sidebar `hHd-Xa_`, ui-conversation `wSkVaW_`).
+ * dsh 0.2.2-rc.2's AppFrame at phone width with a Session open, as rendered
+ * (ui-layout AppFrame.module.css `pI_x6G_`, ui-conversation `wSkVaW_`).
  */
-function frame(overrides: { column?: string; header?: string; composer?: string } = {}): Node {
+function frame(overrides: { scroll?: Record<string, string> } = {}): Node {
   const conversation: Node = {
     attrs: {
       ...cls("wSkVaW_body"),
       "data-conversation-content": "",
       "data-conversation-session": "s1",
+      "data-conversation-region": "chat",
+      "data-content-phase": "active",
     },
     children: [
       {
-        attrs: cls(overrides.header ?? "wSkVaW_header wSkVaW_headerBlank"),
-        children: [{ attrs: { "data-conversation-header-leading": "" } }],
-      },
-      {
-        attrs: { ...cls("wSkVaW_scrollBody"), "data-conversation-scroll": "" },
+        attrs: { "data-slot": "conversation" },
         children: [
           {
-            attrs: {
-              ...cls(overrides.composer ?? "wSkVaW_composerSeat"),
-              "data-composer-seat": "",
-            },
-          },
-        ],
-      },
-    ],
-  };
-  return {
-    attrs: cls("pI_x6G_frame"),
-    children: [
-      {
-        attrs: cls(overrides.column ?? "pI_x6G_sidebarCol"),
-        children: [{ children: [{ attrs: cls("hHd-Xa_root") }] }],
-      },
-      { attrs: cls("pI_x6G_centerCol"), children: [conversation] },
-      { attrs: cls("pI_x6G_rightbarCol") },
-      { attrs: { ...cls("pI_x6G_overlayLayer"), "data-shell-overlay": "true" } },
-      { attrs: cls("pI_x6G_handle") },
-    ],
-  };
-}
-
-/** dsh 0.2.2-rc.2's Settings panel (ui-settings-general `VOzbGW_`). */
-function settings(overrides: { navList?: string; options?: string } = {}): Node {
-  return {
-    attrs: { ...cls("VOzbGW_panel"), "data-shortcut-modal": "settings" },
-    children: [
-      {
-        tag: "nav",
-        attrs: cls("VOzbGW_nav"),
-        children: [
-          { attrs: cls("VOzbGW_navTitle") },
-          {
-            attrs: cls(overrides.navList ?? "VOzbGW_navList"),
+            attrs: cls("q08b7a_layer"),
             children: [
-              { attrs: cls("VOzbGW_navCell"), children: [{ attrs: cls("VOzbGW_navLabel") }] },
+              {
+                attrs: overrides.scroll ?? {
+                  ...cls("wSkVaW_scrollBody"),
+                  "data-conversation-scroll": "",
+                },
+                children: [{ attrs: cls("wSkVaW_viewArea") }],
+              },
             ],
           },
         ],
       },
+    ],
+  };
+  return {
+    attrs: {
+      ...cls("pI_x6G_frame"),
+      "data-sidebar-drawer": "true",
+      "data-sidebar-collapsed": "true",
+    },
+    children: [
+      { attrs: { ...cls("pI_x6G_drawerMask"), "data-sidebar-mask": "true" } },
+      { attrs: cls("pI_x6G_sidebarCol") },
       {
-        attrs: cls("VOzbGW_content"),
+        attrs: cls("pI_x6G_centerCol"),
         children: [
-          { attrs: cls("VOzbGW_header") },
-          { attrs: cls(overrides.options ?? "VOzbGW_options") },
+          {
+            attrs: cls("pI_x6G_mainPanel"),
+            children: [
+              {
+                attrs: { ...cls("wSkVaW_root"), "data-phase": "active" },
+                children: [conversation],
+              },
+            ],
+          },
         ],
       },
+      { attrs: { ...cls("pI_x6G_rightbarCol"), "data-rightbar-col": "true" } },
+      { attrs: { ...cls("pI_x6G_bottomRow"), "data-shell-bottom": "true" } },
+      { attrs: { ...cls("pI_x6G_overlayLayer"), "data-shell-overlay": "true" } },
+      { attrs: { ...cls("pI_x6G_leadingSeat"), "data-shell-leading": "true" } },
     ],
   };
 }
 
-test("the phone probes pass on dsh 0.2.2-rc.2's frame, conversation and Settings panel", () => {
-  const page = pageOf(frame(), settings());
-  assert.equal(probePhoneLayout(page)?.state, "ok");
-  assert.equal(probePhoneConversation(page)?.state, "ok");
-  assert.equal(probePhoneSettings(page)?.state, "ok");
+test("the phone probe passes on dsh 0.2.2-rc.2's conversation", () => {
+  assert.equal(probePhoneConversation(pageOf(frame()))?.state, "ok");
 });
 
-test("a phone probe judges only what is on the page", () => {
-  const empty = pageOf({});
-  assert.equal(probePhoneLayout(empty), undefined);
-  assert.equal(probePhoneConversation(empty), undefined);
-  assert.equal(probePhoneSettings(pageOf(frame())), undefined);
+test("the phone probe judges only what is on the page", () => {
+  assert.equal(probePhoneConversation(pageOf({})), undefined);
 });
 
-test("each phone probe catches a renamed part of its own group only", () => {
-  const layout = pageOf(frame({ column: "pI_x6G_sidebar" }));
-  assert.equal(probePhoneLayout(layout)?.state, "changed");
-  assert.equal(probePhoneConversation(layout)?.state, "ok");
-
-  const header = pageOf(frame({ header: "wSkVaW_top" }));
-  assert.equal(probePhoneConversation(header)?.state, "changed");
-  assert.equal(probePhoneLayout(header)?.state, "ok");
-  assert.equal(
-    probePhoneConversation(pageOf(frame({ composer: "wSkVaW_seat" })))?.state,
-    "changed",
-  );
-
-  assert.equal(probePhoneSettings(pageOf(settings({ navList: "VOzbGW_tabs" })))?.state, "changed");
-  assert.equal(probePhoneSettings(pageOf(settings({ options: "VOzbGW_body" })))?.state, "changed");
+test("the phone probe catches a renamed conversation scroller", () => {
+  const renamed = pageOf(frame({ scroll: cls("wSkVaW_scrollBody") }));
+  assert.equal(probePhoneConversation(renamed)?.state, "changed");
 });
 
-test("the phone stylesheet relies on no dsh markup its probes do not check, and drops failed groups", () => {
+test("the phone stylesheet relies on no dsh markup its probe does not check, and drops a failed group", () => {
   const phone = "(max-width: 767px)";
   const all = phoneStylesheet({}, phone);
-  const declared = new Set<string>([...Object.values(PARTS), `[${PARTS.collapsed}]`]);
+  const declared = new Set<string>(Object.values(PARTS));
   const used = all.match(/\[class\*="[^"]+"\]|\[data-[\w-]+(?:="[^"]*")?\]/g) ?? [];
   assert.ok(used.length > 0);
   for (const selector of used)
     assert.ok(declared.has(selector), `${selector} is not a declared part`);
-
-  const failed = { state: "changed", reason: "" } as const;
-  const withoutSettings = phoneStylesheet({ "phone-settings": failed }, phone);
-  assert.ok(!withoutSettings.includes(PARTS.settings));
-  assert.ok(withoutSettings.includes(PARTS.sidebarCol));
-  const withoutLayout = phoneStylesheet({ "phone-layout": failed }, phone);
-  assert.ok(!withoutLayout.includes(PARTS.sidebarCol));
-  assert.ok(withoutLayout.includes(PARTS.settings));
-  // Rules on plain elements stay whatever dsh looks like.
-  assert.ok(withoutLayout.includes("touch-action:manipulation"));
+  // dsh 0.2.2-rc.2 lays out its own drawer and Settings on a phone.
+  assert.ok(!all.includes("_sidebarCol"));
+  assert.ok(!all.includes("data-shortcut-modal"));
   // The welcome page's hero is pinned near the top on a phone (dsh centers it).
   assert.ok(all.includes("justify-content:flex-start"));
   assert.ok(all.includes(PARTS.viewArea));
+  const failed = { state: "changed", reason: "" } as const;
   const withoutConversation = phoneStylesheet({ "phone-conversation": failed }, phone);
   assert.ok(!withoutConversation.includes("justify-content:flex-start"));
-  // A phone's own browser pads the safe areas; the app's shell pads its WebView.
-  assert.ok(all.includes("env(safe-area-inset-top,0px)"));
-  const inApp = phoneStylesheet({}, phone, APP_SAFE_AREA);
-  assert.ok(!inApp.includes("env(safe-area-inset-top"));
-  assert.ok(!inApp.includes("env(safe-area-inset-bottom"));
-  assert.ok(inApp.includes("env(safe-area-inset-left"));
+  assert.ok(!withoutConversation.includes(PARTS.scroll));
+  // Rules on plain elements stay whatever dsh looks like.
+  assert.ok(withoutConversation.includes("touch-action:manipulation"));
+  // The page pads no safe area: the viewport no longer extends under it.
+  assert.ok(!all.includes("safe-area-inset"));
 });
 
 test("the Session store passes while dsh writes what Kivotos reads", () => {

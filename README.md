@@ -18,7 +18,7 @@ Kivotos is an open source plugin for DeepSeek Harness (dsh). Open any of your ma
 - **All your machines:** Switch between them from the dsh sidebar. What you see is the remote dsh's own UI, so everything works.
 - **Two ways to connect:** Tailscale, or a relay server you run yourself. A machine can use both at once.
 - **Untrusted relay:** The relay only forwards end-to-end encrypted data. It cannot read it or join your network.
-- **Phone layout:** Drawer sidebar, composer at the bottom, safe areas, light and dark.
+- **On a phone:** dsh's own phone layout, plus a welcome screen that starts at the top, Enter for a new line in the composer, and a composer that stays above the keyboard; light and dark.
 - **Android app:** The full dsh UI, with notifications for approvals, questions, and finished tasks; an approval that maps to one tool call can be allowed or denied right from the notification.
 - **Safe restart:** Restart dsh from anywhere, even when you are only connected remotely: it quits cleanly, starts again by itself, and the page reconnects.
 - **Self-hosted:** No account, no telemetry, no push service.
