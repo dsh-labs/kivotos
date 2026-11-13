@@ -1,204 +1,291 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { backLayer, closeLayer, PARTS } from "../src/dsh/frame.ts";
+import { closeLayer, openLayer, PARTS, type LayerPage } from "../src/dsh/frame.ts";
 
-/** A rendered element: tag, attributes, children; enough for `backLayer`'s selectors. */
-interface Node {
-  tag?: string;
-  attrs?: Record<string, string>;
-  children?: Node[];
-  /** What clicks on it did (`click()`). */
-  clicked?: number;
-  /** Gone from the page: dsh has rendered its closing. */
-  removed?: boolean;
-}
-
-/** One compound selector: `tag`, `.class`, `[attr]`, `[attr=v]`, `[attr="v"]`, `[attr*="v"]`. */
-function matchesOne(node: Node, selector: string): boolean {
-  const attrs = node.attrs ?? {};
-  const tag = /^[a-z]+/.exec(selector)?.[0];
-  if (tag !== undefined && (node.tag ?? "div") !== tag) return false;
-  for (const [, name] of selector.matchAll(/\.([\w-]+)/g))
-    if (!(attrs.class ?? "").split(" ").includes(name)) return false;
-  for (const [, name, op, value] of selector.matchAll(/\[([\w-]+)(?:(\*?=)"?([^"\]]*)"?)?\]/g)) {
-    if (!(name in attrs)) return false;
-    if (op === "=" && attrs[name] !== value) return false;
-    if (op === "*=" && !attrs[name].includes(value)) return false;
+// Node has no KeyboardEvent; this is enough for what `closeLayer` builds.
+class KeyboardEvent extends Event {
+  readonly key: string;
+  constructor(type: string, init: KeyboardEventInit) {
+    super(type, init);
+    this.key = init.key ?? "";
   }
-  return true;
+}
+Object.assign(globalThis, { KeyboardEvent });
+
+/**
+ * One rendered element: what it is, what it holds, and what an Escape that
+ * reaches it does, as dsh's own listeners would.
+ */
+interface Fake {
+  role?: "menu" | "modal" | "switcher" | "listbox" | "seat" | "editor" | "card";
+  children?: Fake[];
+  /** Whether it is still rendered (an Escape it handles may close it). */
+  open?: boolean;
+  /**
+   * What an Escape reaching it does: `close` spends it and closes `closes`
+   * (itself by default); `spend` spends it and closes nothing (the preview
+   * notice); none lets it bubble on.
+   */
+  onEscape?: "close" | "spend";
+  closes?: Fake;
+  /** Escape keydowns that reached it (its own or a child's, as they bubble). */
+  escapes?: number;
 }
 
-const matches = (node: Node, list: string): boolean =>
-  list.split(",").some((selector) => matchesOne(node, selector.trim()));
+const ROLES: Record<string, Fake["role"]> = {
+  "[role=menu]": "menu",
+  '[role=dialog][aria-modal="true"]': "modal",
+  ".kivotos-machines-list": "switcher",
+  "[role=listbox]": "listbox",
+  [PARTS.composer]: "seat",
+  '[contenteditable="true"]': "editor",
+};
 
-function all(nodes: Node[]): Node[] {
-  return nodes.flatMap((node) => [node, ...all(node.children ?? [])]);
+interface Page extends LayerPage {
+  focus(fake: Fake | null): void;
+  element(fake: Fake): Element;
+  /** Escape keydowns that reached the window, where dsh's shortcut service listens. */
+  window: number;
 }
 
-interface Element {
-  readonly isConnected: boolean;
-  matches(selectors: string): boolean;
-  querySelector(selectors: string): Element | null;
-  click(): void;
-}
-
-// One element per node, so `backLayer`'s `closing` set can hold them.
-const elements = new WeakMap<Node, Element>();
-
-function element(node: Node): Element {
-  const known = elements.get(node);
-  if (known !== undefined) return known;
-  const self: Element = {
-    get isConnected() {
-      return node.removed !== true;
-    },
-    matches: (selectors) => matches(node, selectors),
-    querySelector: (selectors) => {
-      const found = all(node.children ?? []).find((each) => matches(each, selectors));
-      return found === undefined ? null : element(found);
-    },
-    click: () => {
-      node.clicked = (node.clicked ?? 0) + 1;
-    },
+/** A page of `roots` in document order, read and dispatched on the way `closeLayer` does. */
+function pageOf(...roots: Fake[]): Page {
+  const elements = new Map<Fake, Element>();
+  const parents = new Map<Fake, Fake>();
+  const link = (nodes: Fake[], parent?: Fake): void => {
+    for (const node of nodes) {
+      if (parent !== undefined) parents.set(node, parent);
+      link(node.children ?? [], node);
+    }
   };
-  elements.set(node, self);
-  return self;
-}
-
-/** A page of `roots` in document order, as `backLayer` reads it; a removed node is gone. */
-function pageOf(...roots: Node[]): Document {
-  const nodes = (): Node[] => all(roots).filter((node) => node.removed !== true);
-  const page = {
-    body: element({ tag: "body" }),
-    querySelector: (selectors: string) => {
-      const found = nodes().find((node) => matches(node, selectors));
-      return found === undefined ? null : element(found);
+  link(roots);
+  const rendered = (): Fake[] => {
+    const out: Fake[] = [];
+    const visit = (nodes: Fake[]): void => {
+      for (const node of nodes) {
+        if (node.open === false) continue;
+        out.push(node);
+        visit(node.children ?? []);
+      }
+    };
+    visit(roots);
+    return out;
+  };
+  const is = (node: Fake, selectors: string): boolean =>
+    selectors.split(",").some((selector) => ROLES[selector.trim()] === node.role);
+  const fakeOf = (other: Element | null): Fake | undefined =>
+    [...elements].find(([, each]) => each === other)?.[0];
+  const up = function* (node: Fake | undefined): Generator<Fake> {
+    for (let at = node; at !== undefined; at = parents.get(at)) yield at;
+  };
+  const listeners = new Map<string, Set<(event: Event) => void>>();
+  let focused: Fake | null = null;
+  const page: Page = {
+    window: 0,
+    get activeElement() {
+      return focused === null ? null : element(focused);
     },
-    querySelectorAll: (selectors: string) =>
-      nodes()
-        .filter((node) => matches(node, selectors))
+    querySelectorAll: (selectors) =>
+      rendered()
+        .filter((node) => is(node, selectors))
         .map(element),
+    addEventListener(type, listener) {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type)?.add(listener);
+    },
+    removeEventListener(type, listener) {
+      listeners.get(type)?.delete(listener);
+    },
+    focus(fake) {
+      focused = fake;
+    },
+    element,
   };
-  return page as unknown as Document;
+  function element(node: Fake): Element {
+    let made = elements.get(node);
+    if (made !== undefined) return made;
+    made = {
+      get isConnected() {
+        return rendered().includes(node);
+      },
+      matches: (selectors: string) => is(node, selectors),
+      closest: (selectors: string) => {
+        for (const at of up(node)) if (is(at, selectors)) return element(at);
+        return null;
+      },
+      contains: (other: Element | null) => [...up(fakeOf(other))].includes(node),
+      dispatchEvent(event: Event) {
+        // Up from `node`: the first handler on the way acts; then the
+        // document's listeners; then the window, unless stopped.
+        for (const at of up(node)) {
+          if (event.type === "keydown") at.escapes = (at.escapes ?? 0) + 1;
+          if (at.onEscape === undefined || event.type !== "keydown") continue;
+          event.preventDefault();
+          if (at.onEscape === "close") (at.closes ?? at).open = false;
+          break;
+        }
+        for (const listener of listeners.get(event.type) ?? []) listener(event);
+        if (event.type === "keydown" && !event.cancelBubble) page.window += 1;
+        return true;
+      },
+    } as unknown as Element;
+    elements.set(node, made);
+    return made;
+  }
+  return page;
 }
 
-const cls = (value: string): Record<string, string> => ({ class: value });
-const modal = { role: "dialog", "aria-modal": "true" };
-const close = (): Node => ({ tag: "button", attrs: cls("_close_14mp3_80") });
+// What `flushSync` does here: the fakes change at once.
+const render = (dispatch: () => void): void => dispatch();
 
-/** dsh 0.2.2-rc.2's frame; SidebarRoot is a modal dialog while it is the open drawer. */
-function frame(drawerOpen: boolean, sidebar: Node[] = []): Node {
-  const root: Node = {
-    attrs: {
-      ...cls("hHd-Xa_root"),
-      role: "dialog",
-      "data-shortcut-modal": "sidebar",
-      ...(drawerOpen ? { "aria-modal": "true" } : {}),
-    },
-    children: sidebar,
-  };
-  return {
-    attrs: { ...cls("pI_x6G_frame"), "data-sidebar-drawer": "true" },
-    children: [
-      { attrs: cls("pI_x6G_sidebarCol"), children: [{ children: [root] }] },
-      { attrs: cls("pI_x6G_centerCol") },
-      { attrs: { "data-shell-overlay": "true" } },
-    ],
-  };
+const drawer = (...children: Fake[]): Fake => ({ role: "modal", onEscape: "close", children });
+const menu = (): Fake => ({ role: "menu", onEscape: "close" });
+/** A composer seat: the editor and, when open, its suggestions popup. */
+function composer(popup: boolean): { seat: Fake; editor: Fake; listbox: Fake } {
+  const listbox: Fake = { role: "listbox", open: popup };
+  const editor: Fake = { role: "editor", onEscape: "close", closes: listbox };
+  return { seat: { role: "seat", children: [listbox, editor] }, editor, listbox };
 }
 
-/** dsh's Settings panel: a modal with its close button in the header. */
-const settings = (): Node => ({
-  attrs: { ...cls("VOzbGW_panel"), ...modal, "data-shortcut-modal": "settings" },
-  children: [
-    {
-      attrs: cls("VOzbGW_content"),
-      children: [{ attrs: cls("VOzbGW_header"), children: [close()] }],
-    },
-  ],
+test("nothing is open over a conversation, and Back sends no Escape there", () => {
+  const card: Fake = { role: "card", onEscape: "close" };
+  const { seat, editor } = composer(false);
+  const page = pageOf({ children: [card, seat] });
+  const kept = new Set<Element>();
+  assert.equal(openLayer(page, kept), null);
+  for (const focus of [card, editor, null]) {
+    page.focus(focus);
+    assert.equal(closeLayer(page, kept, render), false);
+  }
+  // A pending approval is not rejected; a running reply is not stopped.
+  assert.equal(card.escapes, undefined);
+  assert.equal(editor.escapes, undefined);
+  assert.equal(page.window, 0);
 });
 
-const openOf = (page: Document, closing = new Set<Element>()): string | null =>
-  backLayer(page, closing as unknown as Set<globalThis.Element>)?.open ?? null;
-
-test("Back finds nothing over a conversation with the drawer closed", () => {
-  assert.equal(openOf(pageOf(frame(false))), null);
+test("the topmost layer is the last one in document order, and the depth counts them all", () => {
+  const top = menu();
+  const page = pageOf(drawer(), top);
+  const layer = openLayer(page, new Set());
+  assert.equal(layer?.element, page.element(top));
+  assert.equal(layer?.target, page.element(top));
+  assert.equal(layer?.depth, 2);
 });
 
-test("Back finds the open drawer, not a modal without a close button", () => {
-  // SidebarRoot is `[role=dialog][aria-modal=true]` with no `_close` while open.
-  assert.equal(openOf(pageOf(frame(true))), "drawer");
-  assert.ok(PARTS.drawer.includes("sidebar"));
+test("one Back closes one layer: a menu over the drawer, then the drawer", () => {
+  const over = menu();
+  const under = drawer();
+  const page = pageOf(under, over);
+  const kept = new Set<Element>();
+  assert.equal(closeLayer(page, kept, render), true);
+  assert.equal(over.open, false);
+  assert.equal(under.open, undefined);
+  assert.equal(openLayer(page, kept)?.depth, 1);
+  assert.equal(closeLayer(page, kept, render), true);
+  assert.equal(under.open, false);
+  assert.equal(openLayer(page, kept), null);
+  assert.equal(over.escapes, 1);
+  assert.equal(under.escapes, 1);
 });
 
-test("Back closes a menu or the switcher before the drawer under it", () => {
-  const menu: Node = { attrs: { role: "menu" } };
-  assert.equal(openOf(pageOf(frame(true), menu)), "menu");
-  const switcher: Node = { tag: "ul", attrs: cls("kivotos-machines-list") };
-  // The switcher sits inside the drawer's footer: after SidebarRoot in document order.
-  assert.equal(openOf(pageOf(frame(true, [switcher]))), "menu");
+test("the Escape goes to the focus inside the layer, else to the layer, never to a card outside it", () => {
+  const button: Fake = {};
+  const settings: Fake = { role: "modal", onEscape: "close", children: [button] };
+  const card: Fake = { role: "card", onEscape: "close" };
+  const page = pageOf({ children: [card] }, settings);
+  page.focus(button);
+  assert.equal(closeLayer(page, new Set(), render), true);
+  assert.equal(button.escapes, 1);
+  assert.equal(settings.open, false);
+
+  const dialog: Fake = { role: "modal", onEscape: "close" };
+  const other = pageOf({ children: [card] }, dialog);
+  other.focus(card);
+  assert.equal(closeLayer(other, new Set(), render), true);
+  assert.equal(dialog.open, false);
+  assert.equal(card.escapes, undefined);
+  assert.equal(card.open, undefined);
 });
 
-test("Back clicks the close button of the topmost dialog", () => {
-  const confirm = close();
-  const dialog: Node = { attrs: { ...cls("_dialog_14mp3_33"), ...modal }, children: [confirm] };
-  const page = pageOf(frame(true), settings(), dialog);
-  const layer = backLayer(page, new Set());
-  assert.equal(layer?.open, "dialog");
-  if (layer !== null) closeLayer(page, layer, () => assert.fail("not the drawer"));
-  assert.equal(confirm.clicked, 1);
+test("the switcher in the drawer is a layer of its own", () => {
+  const switcher: Fake = { role: "switcher", onEscape: "close" };
+  const sidebar = drawer(switcher);
+  const page = pageOf(sidebar);
+  const kept = new Set<Element>();
+  assert.equal(openLayer(page, kept)?.element, page.element(switcher));
+  assert.equal(closeLayer(page, kept, render), true);
+  assert.equal(switcher.open, false);
+  assert.equal(sidebar.open, undefined);
+  assert.equal(openLayer(page, kept)?.element, page.element(sidebar));
 });
 
-test("Back closes Settings over the drawer by its header button", () => {
-  const panel = settings();
-  const page = pageOf(frame(true), panel);
-  const layer = backLayer(page, new Set());
-  assert.equal(layer?.open, "dialog");
-  if (layer !== null) closeLayer(page, layer, () => assert.fail("not the drawer"));
-  assert.equal(all([panel]).find((node) => node.tag === "button")?.clicked, 1);
+test("a suggestions popup is a layer while its editor has the focus, and its Escape goes to the editor", () => {
+  const { seat, editor, listbox } = composer(true);
+  const page = pageOf({ children: [seat] });
+  const kept = new Set<Element>();
+  page.focus(editor);
+  const layer = openLayer(page, kept);
+  assert.equal(layer?.element, page.element(listbox));
+  assert.equal(layer?.target, page.element(editor));
+  assert.equal(closeLayer(page, kept, render), true);
+  assert.equal(listbox.open, false);
+  assert.equal(editor.escapes, 1);
+  assert.equal(openLayer(page, kept), null);
 });
 
-test("Back closes the drawer through the caller", () => {
-  const page = pageOf(frame(true));
-  const layer = backLayer(page, new Set());
-  let closed = 0;
-  if (layer !== null) closeLayer(page, layer, () => (closed += 1));
-  assert.equal(closed, 1);
+test("a suggestions popup without its editor focused is not a layer, and nothing is sent", () => {
+  const { seat, editor, listbox } = composer(true);
+  const card: Fake = { role: "card", onEscape: "close" };
+  // Another seat's editor, an approval card, a button in the seat, nothing.
+  const elsewhere = composer(false);
+  const button: Fake = {};
+  seat.children?.push(button);
+  const page = pageOf({ children: [card, seat, elsewhere.seat] });
+  const kept = new Set<Element>();
+  for (const focus of [elsewhere.editor, card, button, null]) {
+    page.focus(focus);
+    assert.equal(openLayer(page, kept), null);
+    assert.equal(closeLayer(page, kept, render), false);
+  }
+  assert.equal(listbox.open, true);
+  assert.equal(editor.escapes, undefined);
+  assert.equal(card.escapes, undefined);
+  assert.equal(page.window, 0);
 });
 
-test("Back has nothing to close under a dialog without a close button (the preview notice)", () => {
-  const notice: Node = {
-    attrs: { ...cls("_dialog_14mp3_33 jLrgrW_dialog"), ...modal },
-    children: [{ tag: "button", attrs: cls("_button_1ulci_2 _primary_1ulci_30") }],
-  };
-  assert.equal(openOf(pageOf(frame(true), notice)), null);
+test("an Escape no layer spends stops at the document and never reaches the shortcut service", () => {
+  // A modal outside dsh's Escape stack: nothing on its path handles Escape.
+  const foreign: Fake = { role: "modal" };
+  const page = pageOf(foreign);
+  const kept = new Set<Element>();
+  assert.equal(closeLayer(page, kept, render), false);
+  assert.equal(foreign.escapes, 1);
+  assert.equal(page.window, 0);
+  // It is kept: Back leaves, and no second Escape is sent.
+  assert.equal(openLayer(page, kept), null);
+  assert.equal(closeLayer(page, kept, render), false);
+  assert.equal(foreign.escapes, 1);
+  // A spent Escape is left to propagate, so dsh's shortcut service sees it
+  // as spent (and resets its Esc Esc sequence); the one-shot listener is gone.
+  const other = pageOf(menu());
+  assert.equal(closeLayer(other, new Set(), render), true);
+  assert.equal(other.window, 1);
 });
 
-test("Back does not read the drawer as a modal when dsh is not in drawer mode", () => {
-  // Wide layout: SidebarRoot carries no role and no aria-modal.
-  const wide: Node = { attrs: cls("pI_x6G_frame"), children: [{ attrs: cls("hHd-Xa_root") }] };
-  assert.equal(openOf(pageOf(wide)), null);
-});
-
-test("a second Back before dsh renders the first close takes the next layer", () => {
-  const menu: Node = { attrs: { role: "menu" } };
-  const drawer = frame(true);
-  const page = pageOf(drawer, menu);
-  const closing = new Set<globalThis.Element>();
-  const first = backLayer(page, closing);
-  assert.equal(first?.open, "menu");
-  if (first !== null) closing.add(first.element);
-  // The menu is still in the page: the drawer is next, and is not toggled twice.
-  const second = backLayer(page, closing);
-  assert.equal(second?.open, "drawer");
-  if (second !== null) closing.add(second.element);
-  assert.equal(backLayer(page, closing), null);
-  // Once rendered closed, the layers leave `closing`: the drawer reopened is open again.
-  menu.removed = true;
-  const root = all([drawer]).find((node) => node.attrs?.["data-shortcut-modal"] === "sidebar");
-  delete root?.attrs?.["aria-modal"];
-  assert.equal(backLayer(page, closing), null);
-  assert.equal(closing.size, 0);
-  if (root?.attrs !== undefined) root.attrs["aria-modal"] = "true";
-  assert.equal(backLayer(page, closing)?.open, "drawer");
+test("a dialog an Escape does not close (the preview notice) is kept: nothing is open after it", () => {
+  const notice: Fake = { role: "modal", onEscape: "spend" };
+  const page = pageOf(drawer(), notice);
+  const kept = new Set<Element>();
+  assert.equal(openLayer(page, kept)?.depth, 2);
+  // The close answers false, so the app leaves; the notice stays.
+  assert.equal(closeLayer(page, kept, render), false);
+  assert.equal(notice.open, undefined);
+  assert.equal(openLayer(page, kept), null);
+  // No second Escape goes to it, nor to the drawer under it.
+  assert.equal(closeLayer(page, kept, render), false);
+  assert.equal(notice.escapes, 1);
+  // Once it is dismissed by its own button, the drawer is open again.
+  notice.open = false;
+  assert.equal(openLayer(page, kept)?.depth, 1);
+  assert.equal(kept.size, 0);
 });

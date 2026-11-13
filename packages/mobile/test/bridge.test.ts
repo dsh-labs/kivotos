@@ -65,29 +65,29 @@ test("closeScript runs __kivotosClose and posts its answer", () => {
   );
 });
 
-test("kivotos.layers parses only the kinds Back knows", () => {
-  for (const open of ["menu", "dialog", "drawer", null])
+test("kivotos.layers parses a count of open layers, or null", () => {
+  for (const open of [1, 3, null])
     assert.deepEqual(parseBridgeMessage(JSON.stringify({ type: "kivotos.layers", open })), {
       type: "kivotos.layers",
       open,
     });
-  for (const open of ["kept", "none", "", 1, true, {}, []])
+  // #64's kinds, and anything that is not a positive whole count, are refused:
+  // the app then asks the page, as it asks an older Kivotos.
+  for (const open of ["menu", "dialog", "drawer", 0, -1, 1.5, "", true, {}, []])
     assert.equal(parseBridgeMessage(JSON.stringify({ type: "kivotos.layers", open })), null);
   // A missing field is not null: it is refused, so the app keeps asking.
   assert.equal(parseBridgeMessage(JSON.stringify({ type: "kivotos.layers" })), null);
 });
 
 test("Back closes what the page reports open, leaves at once otherwise, and asks an older page", () => {
-  assert.equal(backAction("menu", false), "close");
-  assert.equal(backAction("dialog", false), "close");
-  assert.equal(backAction("drawer", false), "close");
+  assert.equal(backAction(1, false), "close");
+  assert.equal(backAction(2, false), "close");
   assert.equal(backAction(null, false), "leave");
   assert.equal(backAction(undefined, false), "ask");
 });
 
 test("a page whose close changed nothing is left on the next Back, open or not", () => {
-  for (const open of ["menu", "dialog", "drawer"] as const)
-    assert.equal(backAction(open, true), "leave");
+  for (const open of [1, 2]) assert.equal(backAction(open, true), "leave");
   assert.equal(backAction(null, true), "leave");
   // An older page is still asked: it has its own timeout.
   assert.equal(backAction(undefined, true), "ask");

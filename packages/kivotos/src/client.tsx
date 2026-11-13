@@ -22,7 +22,7 @@
 import * as React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { AUDIO_EXTENSIONS, audioMimeOf } from "./audio.ts";
 import { VIDEO_EXTENSIONS, videoMimeOf } from "./video.ts";
 import type { AttentionNotice, AttentionState, PeerAttention } from "./attention-hub.ts";
@@ -43,9 +43,9 @@ import { sessionFileAddress } from "./dsh/files.ts";
 import { peerFileIntake } from "./dsh/peer-files.ts";
 import {
   APP_SAFE_AREA,
-  backLayer,
   closeLayer,
   onSessionRowTap,
+  openLayer,
   PARTS,
   phoneStylesheet,
   plainEnter,
@@ -515,51 +515,47 @@ interface AppBridge {
 
 /**
  * The phone app's hardware Back, the way Android treats one screen with
- * things open over it: the topmost one closes (a menu or the switcher, a
- * dialog with a close button, Settings, then the drawer; `backLayer`), and
- * with nothing open the app leaves the page at once. Back never opens the
- * drawer, and a dialog without a close button (the preview notice) does not
- * keep it. Registered whenever the app hosts the page, at any width and
- * whatever the phone-layout probe says: without the drawer layout there is
- * simply no drawer to close.
+ * things open over it: the topmost layer closes (a menu or the switcher, a
+ * dialog, Settings, then the drawer), and with nothing open the app leaves
+ * the page at once. Back closes a layer with dsh's own Escape (`frame.ts`
+ * `closeLayer`) and sends one only while a layer is open: with nothing open,
+ * an Escape would reject a pending approval or count toward stopping the
+ * reply. A layer the Escape leaves open (the preview notice) does not keep
+ * Back: that close answers false and the app leaves. Registered whenever
+ * the app hosts the page, at any width and whatever the phone-layout probe
+ * says: without the drawer layout there is simply no drawer to close.
  *
- * The page pushes what Back would close (`kivotos.layers`, `open`: `menu`,
- * `dialog`, `drawer` or null) once here and then after every change, from
- * the MutationObserver callback itself (a microtask after the DOM changed),
- * so the app decides on Back without asking. With a layer open the app runs
- * `__kivotosClose`, which closes it and answers whether it did. A layer
- * stays `closing` until dsh has rendered it gone, so a second Back before
- * that closes the next layer instead of the same one again (or toggling the
- * drawer back open). `__kivotosBack` serves an app from before the pushed
- * state: it answers at once and closes in the next task, since that app
- * takes Back itself after 400 ms; only one such close is pending at a time.
- * @param toggleSidebar - opens or closes the drawer.
- * @param collapsed - the drawer is closed; a change re-reports the state.
+ * The page pushes what Back would close (`kivotos.layers`, `open`: how many
+ * layers are open, or null) once here and then after every change, from the
+ * MutationObserver callback itself (a microtask after the DOM changed), so
+ * the app decides on Back without asking. With a layer open the app runs
+ * `__kivotosClose`, which renders the Escape's outcome before it returns
+ * (`flushSync`) and answers whether the layer closed, so a second Back
+ * finds the next layer. `__kivotosBack` serves an app from before the
+ * pushed state: it answers at once and closes in the next task, since that
+ * app takes Back itself after 400 ms; only one such close is pending at a time.
  */
-function usePhoneBack(toggleSidebar: () => void, collapsed: boolean): void {
+function usePhoneBack(): void {
   useEffect(() => {
     if (!IN_APP) return undefined;
     const page = window as unknown as AppBridge;
-    const closing = new Set<Element>();
+    const kept = new Set<Element>();
     let posted: string | undefined;
     let pending: ReturnType<typeof setTimeout> | undefined;
     const report = (): void => {
-      const open = backLayer(document, closing)?.open ?? null;
+      const open = openLayer(document, kept)?.depth ?? null;
       const message = JSON.stringify({ type: "kivotos.layers", open });
       if (message === posted) return;
       posted = message;
       page.ReactNativeWebView?.postMessage(message);
     };
     const close = (): boolean => {
-      const layer = backLayer(document, closing);
-      if (layer === null) return false;
-      closing.add(layer.element);
-      closeLayer(document, layer, toggleSidebar);
+      const closed = closeLayer(document, kept, flushSync);
       report();
-      return true;
+      return closed;
     };
     const back = (): boolean => {
-      if (backLayer(document, closing) === null) return false;
+      if (openLayer(document, kept) === null) return false;
       pending ??= setTimeout(() => {
         pending = undefined;
         close();
@@ -573,16 +569,21 @@ function usePhoneBack(toggleSidebar: () => void, collapsed: boolean): void {
       attributes: true,
       attributeFilter: ["aria-modal", "role"],
     });
+    // A suggestions popup is a layer only while its editor has the focus.
+    document.addEventListener("focusin", report);
+    document.addEventListener("focusout", report);
     report();
     page.__kivotosBack = back;
     page.__kivotosClose = close;
     return () => {
       observer.disconnect();
+      document.removeEventListener("focusin", report);
+      document.removeEventListener("focusout", report);
       clearTimeout(pending);
       if (page.__kivotosBack === back) delete page.__kivotosBack;
       if (page.__kivotosClose === close) delete page.__kivotosClose;
     };
-  }, [toggleSidebar, collapsed]);
+  }, []);
 }
 
 /**
@@ -1235,12 +1236,16 @@ function MachineSwitcher({ wide, t }: { wide: boolean; t: Translate }): ReactNod
     const onPointer = (event: PointerEvent): void => {
       if (root.current !== null && !root.current.contains(event.target as Node)) setOpen(false);
     };
+    // Escape is taken in the capture phase and spent, as dsh's own menus do:
+    // otherwise the open drawer around the switcher (dsh's useModalLayer)
+    // would close on the same Escape.
+    const onEscape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      setOpen(false);
+      trigger.current?.focus();
+    };
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        setOpen(false);
-        trigger.current?.focus();
-        return;
-      }
       const moves: Record<string, (at: number, last: number) => number> = {
         ArrowDown: (at, last) => (at >= last ? 0 : at + 1),
         ArrowUp: (at, last) => (at <= 0 ? last : at - 1),
@@ -1257,9 +1262,11 @@ function MachineSwitcher({ wide, t }: { wide: boolean; t: Translate }): ReactNod
       items[move(at, items.length - 1)]?.focus();
     };
     document.addEventListener("pointerdown", onPointer, true);
+    document.addEventListener("keydown", onEscape, true);
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("pointerdown", onPointer, true);
+      document.removeEventListener("keydown", onEscape, true);
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
@@ -1460,7 +1467,7 @@ function PhoneShell({ t, toggleSidebar }: Injected): ReactNode {
   // inside it pads 0; a phone's own browser pads the safe areas itself.
   const safeArea = IN_APP ? APP_SAFE_AREA : undefined;
   useCloseDrawerOnSelect(layout && phone && !collapsed, toggleSidebar);
-  usePhoneBack(toggleSidebar, collapsed);
+  usePhoneBack();
   usePhoneComposerFocus(layout && phone);
   usePhoneComposerLineBreak(layout && phone);
   return (

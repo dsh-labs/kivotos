@@ -97,8 +97,9 @@ export function backScript(seq: number): string {
 
 /**
  * Script that closes the layer a page reported open (`kivotos.layers`): the
- * plugin's `window.__kivotosClose` closes the topmost one (a menu, the
- * switcher, a dialog, Settings, the drawer) and answers whether it did.
+ * plugin's `window.__kivotosClose` sends dsh one Escape for the topmost one
+ * (a menu, the switcher, a dialog, Settings, the drawer) and answers whether
+ * it closed; false also for one an Escape cannot close (the preview notice).
  * @param seq - which Back this answers.
  * @returns script source; the page posts `kivotos.back`.
  */
@@ -114,8 +115,8 @@ function answerScript(name: string, seq: number): string {
 })(); true;`;
 }
 
-/** What a page reports Back would close (`usePhoneBack`); null: nothing. */
-export type BackOpen = "menu" | "dialog" | "drawer" | null;
+/** What a page reports Back would close (`usePhoneBack`): how many layers are open; null: none. */
+export type BackOpen = number | null;
 
 /**
  * What a hardware Back on a page does, from the page's last `kivotos.layers`
@@ -283,7 +284,7 @@ export function parseBridgeMessage(data: string): BridgeMessage | null {
       : null;
   if (message.type === "kivotos.layers") {
     const open = message.open;
-    return open === null || open === "menu" || open === "dialog" || open === "drawer"
+    return open === null || (typeof open === "number" && Number.isSafeInteger(open) && open > 0)
       ? { type: "kivotos.layers", open }
       : null;
   }
