@@ -66,9 +66,32 @@ npm run dev -- --keep                            # keep the files for inspection
 npm run dev -- --help
 ```
 
-It needs `dsh` on `PATH` (`--dsh <path>` or `$DSH_BIN` override it), Go and pnpm. If the lab is up but a process dies, it stops the rest and keeps the directory too. It never touches `~/.dsh` or an installed dsh: everything it writes is under `--lab-dir`, which defaults to `.lab/` in the repository root. Because it deletes that directory, it refuses one that already holds files it did not make.
+It needs `dsh` on `PATH` (`--dsh <path>` or `$DSH_BIN` override it), Go and pnpm. If the lab is up but a process dies, it stops the rest and keeps the directory too. It never touches `~/.dsh` or an installed dsh: everything it writes is under `--lab-dir`, which defaults to `.lab/` in the repository root. Because it deletes that directory, it refuses one that already holds files it did not make. `--plugin <dir>` installs another built plugin package (another checkout's `packages/kivotos`), `--relay-host` sets the address the relay listens on and the invite names, and `--patch <file>` appends a cordis patch layer to the instances' own.
 
 The two instances run relay-only (`listen: false`, `discover: false`), so the lab needs no Tailscale and never mounts the machines of your own tailnet. To exercise the tailnet listener, the phone layout, or an Android device against a lab, use the two-instance lab in [CLAUDE.md](CLAUDE.md#two-instance-lab) instead — it sets `allowSelf` and `staticPeers` and runs the listener on the tailnet address.
+
+## Phone e2e (hardware Back)
+
+`npm run e2e:phone` (`packages/mobile/e2e/phone-back.ts`) checks what the hardware Back does on a machine's page, on an emulator or a device. It starts its own lab through `scripts/dev.mjs` in a temp directory, with a keyless mock model as dsh's default (`packages/mobile/e2e/mock-llm.mjs`: a prompt with `slow` streams for five minutes, any other prompt asks for an approval). It installs the APK, clears the app's data and joins the app to the lab's network by typing the invite. Then, for each state (menus, the drawer, Settings, a modal, the switcher, the model select, the `/` popup, nothing open, a double press, a pending approval, a running reply, an Escape no layer takes, the Preview Notice), it sets the state up over the WebView's DevTools protocol, presses Back with `adb shell input keyevent`, and asserts the result over DevTools and, for a prompt, in dsh's session log. It prints a pass/fail table and exits non-zero on any failure. Whatever happens, it stops the lab, removes its temp directory, the adb forward and reverse, and clears the app's data.
+
+It needs an inspection build of the app. A plain build's WebView cannot be inspected; `EXPO_PUBLIC_KIVOTOS_WEBVIEW_DEBUG=1` at build time turns `webviewDebuggingEnabled` on (Expo inlines the variable into the bundle, so only that build has it):
+
+```sh
+cd packages/mobile
+npx expo prebuild --platform android --no-install
+cd android && EXPO_PUBLIC_KIVOTOS_WEBVIEW_DEBUG=1 ./gradlew assembleRelease
+cd ../../.. && npm run e2e:phone -- --apk packages/mobile/android/app/build/outputs/apk/release/app-release.apk
+npm run e2e:phone -- --apk app.apk --avd kivotos-lab           # use or boot this AVD
+npm run e2e:phone -- --apk app.apk --serial emulator-5554      # one of several devices
+npm run e2e:phone -- --apk app.apk --plugin ../other/packages/kivotos --only drawer,approval
+npm run e2e:phone -- --help
+```
+
+It needs Go and pnpm (for the lab), adb (`$ANDROID_HOME/platform-tools`, else `PATH`) and, the first time, network access: without `--dsh` (or `$DSH_BIN`) it installs `@deepseek-ai/dsh@0.2.2-rc.2` into `~/.cache/kivotos-e2e`. A `--dsh` must sit inside an npm install of `@deepseek-ai/dsh` (its `node_modules/.bin/dsh`), because the mock model imports that install's `@deepseek-ai/dsh-llm`. The relay listens on `127.0.0.1` and reaches the device through `adb reverse`, so no LAN address is needed. States run in order and depend on it: the Preview Notice needs a machine's first load, and the header and row menus need the Session the approval state creates. Every wait has a bound; on a slow host, `--timeout-scale 2` doubles them. The `Phone e2e` workflow runs it in CI on an x86_64 API 35 emulator: nightly, by hand, and on pull requests that change `packages/mobile/`, the plugin's `client.tsx` or `src/dsh/frame.ts`, `scripts/dev.mjs` or the workflow.
+
+On an Apple silicon Mac under memory pressure, an emulator with host GPU rendering can freeze or be killed by its own hang detector during the run; start it with `-gpu swiftshader_indirect -crash-report-mode disabled` (CI uses software rendering too).
+
+A last state opens Settings five times across its sections and requires that no Kivotos compat notice (`.kivotos-compat`, "Part of dsh changed…") and no `slot entry crashed` showed up, in the page or in its console. `packages/mobile/metro.config.js` makes the flag part of Metro's cache key: Metro caches transforms by file contents, not by the environment, so without it a plain build after an inspection build would reuse the inlined `true`. On an emulator image built `userdebug` (the google_apis images), every WebView is inspectable whatever the flag; only a `user` build (a phone) tells the two apart.
 
 ## Relay (`packages/relay/`)
 
@@ -90,13 +113,14 @@ Open the PR against `main`, in English, and say what the change does and how you
 
 A PR runs these CI jobs; all of them must pass:
 
-| Job                                  | What it checks                                                                                               |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| `check (node 22)`, `check (node 24)` | format, lint, typecheck, the dsh boundary, the built `dist/`, `npm test`                                     |
-| `relay (go)`                         | `gofmt -l`, `go vet`, `go test -race`, a build, the container image starting, and the compose file           |
-| `relay image`                        | the relay image builds for amd64 and arm64 (pushed only on `main` and tags)                                  |
-| `android apk`                        | `expo prebuild` and `gradlew assembleRelease`; uploads the APK as an artifact                                |
-| `dsh compatibility` (nightly)        | boots the npm `latest`/`next` dsh with the plugin and checks every coupling point (`scripts/dsh-compat.mjs`) |
+| Job                                   | What it checks                                                                                                    |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `check (node 22)`, `check (node 24)`  | format, lint, typecheck, the dsh boundary, the built `dist/`, `npm test`                                          |
+| `relay (go)`                          | `gofmt -l`, `go vet`, `go test -race`, a build, the container image starting, and the compose file                |
+| `relay image`                         | the relay image builds for amd64 and arm64 (pushed only on `main` and tags)                                       |
+| `android apk`                         | `expo prebuild` and `gradlew assembleRelease`; uploads the APK as an artifact                                     |
+| `dsh compatibility` (nightly)         | boots the npm `latest`/`next` dsh with the plugin and checks every coupling point (`scripts/dsh-compat.mjs`)      |
+| `phone e2e (API 35)` (nightly, paths) | builds the inspection APK and runs `npm run e2e:phone` on an emulator (see [Phone e2e](#phone-e2e-hardware-back)) |
 
 Pushes to `main` and `v*` tags additionally publish the image, and a tag also publishes the npm package and the GitHub Release (`publish npm package`, `publish GitHub Release`). Do not tag or release from a PR.
 
