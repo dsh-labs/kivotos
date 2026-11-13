@@ -91,6 +91,8 @@ It needs Go and pnpm (for the lab), adb (`$ANDROID_HOME/platform-tools`, else `P
 
 On an Apple silicon Mac under memory pressure, an emulator with host GPU rendering can freeze or be killed by its own hang detector during the run; start it with `-gpu swiftshader_indirect -crash-report-mode disabled` (CI uses software rendering too).
 
+A last state opens Settings five times across its sections and requires that no Kivotos compat notice (`.kivotos-compat`, "Part of dsh changed…") and no `slot entry crashed` showed up, in the page or in its console. `packages/mobile/metro.config.js` makes the flag part of Metro's cache key: Metro caches transforms by file contents, not by the environment, so without it a plain build after an inspection build would reuse the inlined `true`. On an emulator image built `userdebug` (the google_apis images), every WebView is inspectable whatever the flag; only a `user` build (a phone) tells the two apart.
+
 ## Relay (`packages/relay/`)
 
 The relay is deliberately split into domain packages — `wire`, `registry`, `admission`, `tunnel`, `admin`, `config`, `cmd` — instead of the single flat root package the Go skill recommends by default. Dependencies point one way: `wire` is imported by all; `registry`, `admission` and `tunnel` never import each other (they meet through interfaces declared by the consumer); `admin` sits on `registry` and `tunnel`; `cmd` assembles everything. Put a change in the package that owns the thing it changes, and keep that shape.

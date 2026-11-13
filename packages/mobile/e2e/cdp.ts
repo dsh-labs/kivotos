@@ -1,8 +1,11 @@
 // A minimal Chrome DevTools Protocol client for the app's WebView pages:
-// list the page targets behind an adb forward, and evaluate in one of them.
+// list the page targets behind an adb forward, evaluate in one of them, and
+// keep what its console printed.
 
 /** How long one protocol call may take before it fails. */
 const CALL_MS = 8000;
+/** How many console lines a page keeps; the oldest go first. */
+const CONSOLE_MAX = 5000;
 
 export interface PageTarget {
   id: string;
@@ -12,11 +15,38 @@ export interface PageTarget {
 
 interface Reply {
   id?: number;
+  method?: string;
+  params?: unknown;
   result?: {
     result?: { value?: unknown };
     exceptionDetails?: { text?: string; exception?: { description?: string } };
   };
   error?: { message?: string };
+}
+
+/** @returns `value[key]` when `value` is an object that has it. */
+function member(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null && key in value
+    ? Reflect.get(value, key)
+    : undefined;
+}
+
+/** @returns one console event's text: its arguments' values or descriptions. */
+function consoleText(method: string, params: unknown): string | undefined {
+  if (method === "Runtime.consoleAPICalled") {
+    const args = member(params, "args");
+    const parts = (Array.isArray(args) ? args : []).map((arg: unknown) => {
+      const value = member(arg, "value");
+      return typeof value === "string" ? value : String(member(arg, "description") ?? value);
+    });
+    return `${String(member(params, "type"))}: ${parts.join(" ")}`;
+  }
+  if (method === "Runtime.exceptionThrown") {
+    const details = member(params, "exceptionDetails");
+    const description = member(member(details, "exception"), "description");
+    return `exception: ${String(description ?? member(details, "text"))}`;
+  }
+  return undefined;
 }
 
 /** @returns every page target the WebView DevTools socket at `port` lists. */
@@ -31,6 +61,8 @@ export async function pageTargets(port: number): Promise<PageTarget[]> {
 /** One open DevTools session with a page. */
 export class Page {
   readonly id: string;
+  /** What the page's console printed, including what it printed before this session (Runtime.enable replays it). */
+  readonly console: string[] = [];
   private readonly ws: WebSocket;
   private next = 0;
   private readonly waiting = new Map<number, (reply: Reply) => void>();
@@ -41,7 +73,14 @@ export class Page {
     this.ws = ws;
     ws.addEventListener("message", (event) => {
       const reply = JSON.parse(String(event.data)) as Reply;
-      if (reply.id === undefined) return;
+      if (reply.id === undefined) {
+        const line = consoleText(reply.method ?? "", reply.params);
+        if (line !== undefined) {
+          this.console.push(line);
+          if (this.console.length > CONSOLE_MAX) this.console.shift();
+        }
+        return;
+      }
       this.waiting.get(reply.id)?.(reply);
       this.waiting.delete(reply.id);
     });
@@ -70,18 +109,17 @@ export class Page {
     } finally {
       clearTimeout(timer);
     }
-    return new Page(target, ws);
+    const page = new Page(target, ws);
+    await page.call("Runtime.enable");
+    return page;
   }
 
   get open(): boolean {
     return !this.closed;
   }
 
-  /**
-   * Evaluates `expression` (awaiting a promise it returns) and returns its
-   * value as JSON. A thrown exception or a call that times out is an error.
-   */
-  async evaluate<T = unknown>(expression: string): Promise<T> {
+  /** Sends one protocol command; an error reply or a call that times out is an error. */
+  private async call(method: string, params: object = {}): Promise<Reply> {
     if (this.closed) throw new Error("DevTools: the page connection is closed");
     this.next += 1;
     const id = this.next;
@@ -92,16 +130,23 @@ export class Page {
       }
     }, CALL_MS);
     this.waiting.set(id, answered.resolve);
-    this.ws.send(
-      JSON.stringify({
-        id,
-        method: "Runtime.evaluate",
-        params: { expression, returnByValue: true, awaitPromise: true },
-      }),
-    );
+    this.ws.send(JSON.stringify({ id, method, params }));
     const reply = await answered.promise;
     clearTimeout(timer);
     if (reply.error !== undefined) throw new Error(`DevTools: ${reply.error.message ?? "error"}`);
+    return reply;
+  }
+
+  /**
+   * Evaluates `expression` (awaiting a promise it returns) and returns its
+   * value as JSON. A thrown exception or a call that times out is an error.
+   */
+  async evaluate<T = unknown>(expression: string): Promise<T> {
+    const reply = await this.call("Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
+    });
     const thrown = reply.result?.exceptionDetails;
     if (thrown !== undefined) {
       throw new Error(`page: ${thrown.exception?.description ?? thrown.text ?? "exception"}`);

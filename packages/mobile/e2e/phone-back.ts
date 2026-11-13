@@ -405,6 +405,11 @@ class Run {
     return this.evaluate<Posted[]>("window.__kivotosE2e ?? []");
   }
 
+  /** What the page's console printed (and threw) so far. */
+  consoleLines(): string[] {
+    return this.current().console;
+  }
+
   /** Presses the hardware Back once, or twice in one `input keyevent`. */
   async back(times: 1 | 2 = 1): Promise<void> {
     await this.hook();
@@ -615,6 +620,26 @@ async function runningReply(
   return `${left}; reply running at tick ${running.ticks} -> ${shown.ticks}, no "Stopped"; dsh: turn started, not ended`;
 }
 
+/** The open Settings dialog (dsh's, not the drawer's). */
+const SETTINGS = `[...document.querySelectorAll('[role=dialog][aria-modal="true"]')].filter((m) => !m.closest('[class*="_sidebarCol"]')).find((m) => m.querySelector('[class*="_navCell"]'))`;
+
+/** Records every Kivotos compat notice or "slot entry crashed" text added to the page from now on. */
+const WATCH = `(() => {
+  if (window.__kivotosE2eWatch) return true;
+  const hits = (window.__kivotosE2eWatch = []);
+  const check = (node) => {
+    if (!(node instanceof Element)) return;
+    if (node.matches(".kivotos-compat") || node.querySelector(".kivotos-compat")) hits.push("compat notice: " + (node.textContent || "").slice(0, 120));
+    const text = node.textContent || "";
+    if (text.includes("Part of dsh changed")) hits.push("compat text: " + text.slice(0, 120));
+    if (text.includes("slot entry crashed")) hits.push("slot entry crashed: " + text.slice(0, 120));
+  };
+  new MutationObserver((records) => {
+    for (const record of records) for (const node of record.addedNodes) check(node);
+  }).observe(document.body, { childList: true, subtree: true });
+  return true;
+})()`;
+
 const CASES: Case[] = [
   {
     id: "preview-notice",
@@ -820,6 +845,66 @@ const CASES: Case[] = [
           return `1st Back ${first}; 2nd Back ${second}`;
         },
       ),
+  },
+  {
+    id: "settings-sections",
+    state: "Settings 5 times across its sections: no compat notice, no slot crash",
+    async run(run) {
+      await run.evaluate(WATCH);
+      const opened: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        await run.openDrawer(true);
+        await openMenu(run, '[aria-label="Account menu"]');
+        await run.evaluate(
+          `(() => { const e = [...document.querySelectorAll("[role=menuitem]")].find((each) => (each.textContent || "").trim().startsWith("Settings")); if (!e) throw new Error("no Settings item"); e.click(); return true; })()`,
+        );
+        await run.untilState("Settings open", (s) => s.modals.length > 0 && s.menus === 0);
+        const sections = await run.until(
+          "Settings' sections",
+          async () => {
+            const names = await run.evaluate<string[]>(
+              `[...(${SETTINGS}?.querySelectorAll('[class*="_navCell"]') ?? [])].map((e) => (e.textContent || "").trim())`,
+            );
+            return names.length > 0 ? names : undefined;
+          },
+          5000,
+        );
+        // The default section first opens on its own; each round opens another one.
+        const name = sections[(i + 1) % sections.length];
+        await run.evaluate(
+          `[...${SETTINGS}.querySelectorAll('[class*="_navCell"]')].find((e) => (e.textContent || "").trim() === ${JSON.stringify(name)}).click(), true`,
+        );
+        await run.until(
+          `the ${name} section`,
+          () =>
+            run.evaluate<boolean>(
+              `[...${SETTINGS}.querySelectorAll('[class*="_navCell"]')].some((e) => (e.textContent || "").trim() === ${JSON.stringify(name)} && e.getAttribute("aria-current") === "true")`,
+            ),
+          5000,
+        );
+        opened.push(name);
+        await run.evaluate(
+          `(() => { const close = [...${SETTINGS}.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Close" || (b.textContent || "").trim() === "Close"); if (!close) throw new Error("Settings has no Close"); close.click(); return true; })()`,
+        );
+        await run.untilState("Settings closed", (s) => s.modals.length === 0);
+      }
+      const page = await run.evaluate<{ notice: number; text: string[]; watched: string[] }>(
+        `({
+          notice: document.querySelectorAll(".kivotos-compat").length,
+          text: ["Part of dsh changed", "slot entry crashed"].filter((t) => (document.body.innerText || "").includes(t) || (document.body.textContent || "").includes(t)),
+          watched: window.__kivotosE2eWatch ?? [],
+        })`,
+      );
+      const crashes = run.consoleLines().filter((line) => line.includes("slot entry crashed"));
+      const problems = [
+        page.notice > 0 ? `${page.notice} .kivotos-compat element(s)` : "",
+        page.text.length > 0 ? `page text has ${page.text.join(", ")}` : "",
+        page.watched.length > 0 ? `seen during the run: ${page.watched.join(" / ")}` : "",
+        crashes.length > 0 ? `console: ${crashes.slice(0, 3).join(" / ")}` : "",
+      ].filter((problem) => problem !== "");
+      if (problems.length > 0) throw new Error(problems.join("; "));
+      return `opened ${opened.join(", ")}; no compat notice (DOM, text, observer); no "slot entry crashed" (page text, ${run.consoleLines().length} console lines)`;
+    },
   },
 ];
 
