@@ -129,6 +129,38 @@ class KivotosAttentionModule : Module() {
 
     Function("isEnabled") { AttentionState.enabled(context) }
 
+    /** Live Updates: "on", "off" (the app's switch), "unsupported" or "blocked" (by Android). */
+    Function("liveUpdates") {
+      when (LiveUpdates.state(context)) {
+        LiveUpdates.State.ON -> "on"
+        LiveUpdates.State.OFF -> "off"
+        LiveUpdates.State.UNSUPPORTED -> "unsupported"
+        LiveUpdates.State.BLOCKED -> "blocked"
+      }
+    }
+
+    Function("setLiveUpdates") { enabled: Boolean ->
+      AttentionState.setLiveEnabled(context, enabled)
+      LiveUpdates.changed()
+    }
+
+    /** Open Android's Live Updates setting for this app (its notification settings where there is none). */
+    Function("openLiveUpdateSettings") {
+      val promotion = Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS)
+        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+      val notifications = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+      val intents = if (Build.VERSION.SDK_INT >= 36) listOf(promotion, notifications) else listOf(notifications)
+      intents.any { intent ->
+        try {
+          context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+          true
+        } catch (_: ActivityNotFoundException) {
+          false
+        }
+      }
+    }
+
     /** The session now on screen ("" for none); clears its notifications. */
     Function("setOnScreen") { machineId: String, sessionId: String ->
       if (machineId.isEmpty() || sessionId.isEmpty()) {
@@ -136,6 +168,7 @@ class KivotosAttentionModule : Module() {
       } else {
         AttentionState.onScreen = machineId to sessionId
         Notifier.cancelSession(context, machineId, sessionId)
+        LiveUpdates.seen(machineId, sessionId)
       }
     }
 

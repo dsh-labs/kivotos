@@ -48,6 +48,12 @@ export interface Attention {
   detail: string;
 }
 
+/**
+ * Android 16 Live Updates: "on" or "off" by the app's switch, "unsupported"
+ * before Android 16 QPR1, "blocked" when Android does not allow this app's.
+ */
+export type LiveUpdates = "on" | "off" | "unsupported" | "blocked";
+
 /** Native events. */
 // oxlint-disable-next-line typescript/consistent-type-definitions -- Expo's `EventsMap` is an index-signature type, which an interface does not satisfy (interfaces get no implicit index signature).
 type Events = {
@@ -68,6 +74,9 @@ declare class KivotosAttentionModule extends NativeModule<Events> {
   probeLinks(): Promise<string>;
   setEnabled(enabled: boolean): void;
   isEnabled(): boolean;
+  liveUpdates(): LiveUpdates;
+  setLiveUpdates(enabled: boolean): void;
+  openLiveUpdateSettings(): void;
   setOnScreen(machineId: string, sessionId: string): void;
   takePendingOpen(): OpenSession | null;
   isBatteryRestricted(): boolean;
@@ -103,6 +112,10 @@ export const setPageVisible = (viewTag: number, visible: boolean): Promise<void>
   native.setPageVisible(viewTag, visible);
 export const setEnabled = (enabled: boolean): void => native.setEnabled(enabled);
 export const isEnabled = (): boolean => native.isEnabled();
+export const liveUpdates = (): LiveUpdates => native.liveUpdates();
+export const setLiveUpdates = (enabled: boolean): void => native.setLiveUpdates(enabled);
+/** Open Android's Live Updates setting for this app. */
+export const openLiveUpdateSettings = (): void => native.openLiveUpdateSettings();
 export const setOnScreen = (machineId: string, sessionId: string): void =>
   native.setOnScreen(machineId, sessionId);
 export const takePendingOpen = (): OpenSession | null => native.takePendingOpen();
