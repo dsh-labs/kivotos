@@ -456,7 +456,23 @@ class Run {
   async openDrawer(open: boolean): Promise<void> {
     const state = await this.state();
     if (state.drawerOpen === open) return;
-    await this.click(".kivotos-drawer-toggle");
+    // Kivotos' toggle where the plugin adds it; else dsh's own phone layout, whose
+    // drawer opens from "Open sidebar" and, as a modal layer, closes on Escape.
+    const toggle = open
+      ? [".kivotos-drawer-toggle", '[aria-label="Open sidebar"]']
+      : [".kivotos-drawer-toggle"];
+    const clicked = await this.evaluate<string | null>(`(() => {
+      const visible = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== "hidden";
+      for (const selector of ${JSON.stringify(toggle)}) {
+        const e = [...document.querySelectorAll(selector)].find(visible);
+        if (e) { e.click(); return selector; }
+      }
+      return null;
+    })()`);
+    if (clicked === null) {
+      if (open) throw new Error("no control opens the drawer");
+      await this.evaluate(ESCAPE);
+    }
     await this.untilState(
       open ? "the drawer open" : "the drawer closed",
       (s) => s.drawerOpen === open,
@@ -913,14 +929,23 @@ async function joinNetwork(device: Device, invite: string, scale: number): Promi
   await device.shell(`pm grant ${PACKAGE} android.permission.POST_NOTIFICATIONS`).catch(() => "");
   await device.shell(`am start -W -n ${ACTIVITY}`, 60_000);
   const timeout = 30_000 * scale;
-  await device.tapNode(
-    await device.waitForNode(
-      "Connections",
-      (nodes) => nodes.find((n) => n.text === "Connections"),
-      timeout,
-    ),
-  );
   const field = (nodes: UiNode[]) => nodes.find((n) => n.className === "android.widget.EditText");
+  // A tap right after the app starts can be lost: tap Connections until its screen is up.
+  let connections = false;
+  for (let attempt = 0; attempt < 3 && !connections; attempt++) {
+    await device.tapNode(
+      await device.waitForNode(
+        "Connections",
+        (nodes) => nodes.find((n) => n.text === "Connections"),
+        timeout,
+      ),
+    );
+    connections = await device
+      .waitForNode("invite field", field, 15_000 * scale)
+      .then(() => true)
+      .catch(() => false);
+  }
+  if (!connections) throw new Error("the Connections screen did not open");
   // A loaded device drops keys of a long `input text` into React Native's
   // controlled field: type in pieces, check each, and start over on a loss.
   let typed = false;
