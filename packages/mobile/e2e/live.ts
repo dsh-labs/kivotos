@@ -3,7 +3,7 @@
 // finished, read from `dumpsys notification --noredact`. On Android 16 QPR1+
 // it must be promoted (the status-bar chip); before, nothing may change: the
 // quiet service notification only, no Live Updates channel, nothing promoted.
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Device } from "./device.ts";
@@ -80,22 +80,49 @@ async function setSwitch(run: LiveRun, label: string, on: boolean): Promise<bool
     .catch(() => false);
 }
 
+const NO_LIVE = "Needs Android 16 or later";
+const BLOCKED = "Live updates are off for Kivotos";
+
+/**
+ * The Live updates switch on the machine list.
+ * @returns undefined while it can be switched; else the reason it shows
+ *   under it, scrolled into view on a short screen.
+ * @throws when it is disabled without a reason.
+ */
+async function disabledReason(run: LiveRun): Promise<string | undefined> {
+  let nodes = await home(run);
+  const live = switchOf(nodes, "Live updates");
+  if (live === undefined) throw new Error("no Live updates switch");
+  if (live.enabled) return undefined;
+  const reason = () =>
+    nodes.find((node) => node.text === NO_LIVE || node.text.startsWith(BLOCKED))?.text;
+  if (reason() === undefined) {
+    // The reason sits under the switch, below the fold of a small screen.
+    const [left, top, right] = live.bounds;
+    const x = Math.round((left + right) / 2);
+    await run.device.shell(`input swipe ${x} ${top} ${x} ${Math.max(0, top - 600)} 300`);
+    nodes = await run.device.ui();
+  }
+  const shown = reason();
+  if (shown === undefined) throw new Error("the Live updates switch is disabled without a reason");
+  return shown;
+}
+
 /**
  * Notifications on, and Live Updates as asked.
  * @returns whether Android has Live Updates for the app (the switch is not disabled with a notice).
  */
 async function prepare(run: LiveRun, live: boolean): Promise<boolean> {
   if (!(await setSwitch(run, "Notifications", true))) throw new Error("Notifications stay off");
-  const nodes = await home(run);
-  if (nodes.some((node) => node.text === "Needs Android 16 or later")) {
+  const reason = await disabledReason(run);
+  if (reason === NO_LIVE) {
     if (run.expectLive) throw new Error("--expect-live, but this Android has no Live Updates");
     return false;
   }
-  if (nodes.some((node) => node.text.startsWith("Live updates are off for Kivotos"))) {
-    throw new Error("Android does not allow the app's Live Updates");
-  }
+  if (reason !== undefined)
+    throw new Error(`Android does not allow the app's Live Updates: ${reason}`);
   if (!(await setSwitch(run, "Live updates", live)))
-    throw new Error("the Live updates switch is disabled");
+    throw new Error("the Live updates switch did not change");
   return true;
 }
 
@@ -172,28 +199,72 @@ async function unchanged(run: LiveRun, during: string): Promise<string> {
   const extra = all.filter((n) => n.channel === "live" || isPromoted(n));
   if (extra.length > 0)
     throw new Error(`a Live Update on Android without them: ${extra.map(describe).join("; ")}`);
-  const channels = await run.device
-    .shell(`cmd notification list_channels ${PACKAGE} 0`)
-    .catch(() => "");
-  if (/\blive\b/.test(channels)) throw new Error("the Live Updates channel exists");
-  return `no Live Updates on this Android: ${describe(service)}; ${all.length} notification(s), none promoted`;
+  // The app's channels: its block of the ranking preferences, else the whole dump
+  // (where no other app on the image has a channel named `live`).
+  const dump = await run.device.shell("dumpsys notification --noredact");
+  const settings =
+    new RegExp(
+      `AppSettings: ${PACKAGE.replaceAll(".", "\\.")} \\(\\d+\\)[\\s\\S]*?(?=AppSettings:|$)`,
+    ).exec(dump)?.[0] ?? dump;
+  if (settings.includes("mId='live'")) throw new Error("the Live Updates channel exists");
+  const reason = await disabledReason(run);
+  if (reason !== NO_LIVE)
+    throw new Error(`the Live updates switch is not disabled as unsupported: ${reason}`);
+  return `no Live Updates on this Android: switch disabled, "${reason}"; ${describe(service)}; ${all.length} notification(s), none promoted, no live channel`;
 }
 
-/** A screenshot of the screen as it is, and of the opened shade. */
-async function shots(run: LiveRun, name: string): Promise<string> {
-  if (run.shots === undefined) return "";
-  mkdirSync(run.shots, { recursive: true });
-  const take = async (file: string) => {
-    await run.device.shell("screencap -p /sdcard/kivotos-e2e.png");
-    await run.device.adb(["pull", "/sdcard/kivotos-e2e.png", path.join(run.shots ?? "", file)]);
-  };
-  await take(`${name}-chip.png`);
-  await run.device.shell("cmd statusbar expand-notifications");
-  await sleep(1500);
-  await take(`${name}-shade.png`);
+/**
+ * The status-bar chip as SystemUI draws it, with the app in the background:
+ * a SystemUI node of the window dump that shows `chip`, else a line of
+ * SystemUI's own dump that names it. Then, with `--shots`, the screen and
+ * the opened shade.
+ */
+async function chipShown(run: LiveRun, name: string, chip: string): Promise<string> {
+  if ((await run.device.focusedWindow()).includes(PACKAGE)) {
+    await run.device.shell("input keyevent KEYCODE_HOME");
+  }
   await run.device.shell("cmd statusbar collapse");
-  await sleep(500);
-  return `; shots ${name}-chip.png, ${name}-shade.png`;
+  let seen = "";
+  try {
+    seen = await run.until(
+      `the status-bar chip "${chip}"`,
+      async () => {
+        const node = (await run.device.ui()).find(
+          (n) => n.pkg === "com.android.systemui" && (n.text === chip || n.desc.includes(chip)),
+        );
+        if (node !== undefined) return `SystemUI shows "${node.text || node.desc}"`;
+        const dump = await run.device.shell("dumpsys activity service com.android.systemui");
+        const line = dump.split("\n").find((each) => /chip/i.test(each) && each.includes(chip));
+        return line === undefined ? undefined : `SystemUI dump: ${line.trim().slice(0, 160)}`;
+      },
+      10_000,
+    );
+  } finally {
+    if (run.shots !== undefined) {
+      mkdirSync(run.shots, { recursive: true });
+      if (seen === "") {
+        const dump = await run.device.shell("dumpsys activity service com.android.systemui");
+        writeFileSync(
+          path.join(run.shots, `${name}-systemui.txt`),
+          dump
+            .split("\n")
+            .filter((each) => /chip|promot|ongoing/i.test(each))
+            .join("\n"),
+        );
+      }
+      const take = async (file: string) => {
+        await run.device.shell("screencap -p /sdcard/kivotos-e2e.png");
+        await run.device.adb(["pull", "/sdcard/kivotos-e2e.png", path.join(run.shots ?? "", file)]);
+      };
+      await take(`${name}-chip.png`);
+      await run.device.shell("cmd statusbar expand-notifications");
+      await sleep(1500);
+      await take(`${name}-shade.png`);
+      await run.device.shell("cmd statusbar collapse");
+      await sleep(500);
+    }
+  }
+  return `; ${seen}${run.shots === undefined ? "" : `; shots ${name}-chip.png, ${name}-shade.png`}`;
 }
 
 /**
@@ -218,13 +289,13 @@ const CASES: LiveCase[] = [
       if (!supported) return unchanged(run, "a running turn");
       const shown = await untilOngoing(
         run,
-        "a promoted Live Update with a chronometer",
-        (n) => promoted(n) && n.chronometer && n.text.startsWith("Running"),
+        "a promoted Live Update with a chronometer and the elapsed minutes",
+        (n) => promoted(n) && n.chronometer && n.chip === "<1 min" && n.text.startsWith("Running"),
         6000,
       );
       if (run.lab.turn(marker).asked > 0)
         throw new Error("the turn already asked; running was not seen alone");
-      return `${describe(shown)}${await shots(run, "running")}`;
+      return `${describe(shown)}${await chipShown(run, "running", "<1 min")}`;
     },
   },
   {
@@ -246,7 +317,7 @@ const CASES: LiveCase[] = [
           promoted(n) && n.chip === "Approve" && n.text.startsWith("Waiting for your approval"),
         10_000,
       );
-      return `${describe(shown)}${await shots(run, "waiting")}`;
+      return `${describe(shown)}${await chipShown(run, "waiting", "Approve")}`;
     },
   },
   {
@@ -277,7 +348,7 @@ const CASES: LiveCase[] = [
         (n) => promoted(n) && n.chip === "Done" && n.text.startsWith("Finished"),
         10_000,
       );
-      const detail = `${describe(done)}${await shots(run, "finished")}`;
+      const detail = `${describe(done)}${await chipShown(run, "finished", "Done")}`;
       const at = Date.now();
       const cleared = await untilOngoing(
         run,

@@ -14,6 +14,10 @@ export interface UiNode {
   focused: boolean;
   /** A switch's or checkbox's state. */
   checked: boolean;
+  /** False for a disabled control. */
+  enabled: boolean;
+  /** The app the node belongs to (`com.android.systemui` for the status bar). */
+  pkg: string;
   /** [left, top, right, bottom] in screen pixels. */
   bounds: [number, number, number, number];
 }
@@ -52,6 +56,8 @@ export function parseUiNodes(xml: string): UiNode[] {
       className: attrs.get("class") ?? "",
       focused: attrs.get("focused") === "true",
       checked: attrs.get("checked") === "true",
+      enabled: attrs.get("enabled") !== "false",
+      pkg: attrs.get("package") ?? "",
       bounds: [Number(box[1]), Number(box[2]), Number(box[3]), Number(box[4])],
     });
   }

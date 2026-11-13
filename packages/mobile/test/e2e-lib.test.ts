@@ -34,6 +34,8 @@ test("parseUiNodes reads text, label, class, focus and bounds, unescaping entiti
     className: "android.widget.TextView",
     focused: false,
     checked: false,
+    enabled: true,
+    pkg: "",
     bounds: [42, 307, 1038, 439],
   });
   const field = nodes.find((node) => node.className === "android.widget.EditText");
