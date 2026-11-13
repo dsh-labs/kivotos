@@ -526,14 +526,15 @@ class Run {
     }
     if (state.approval.includes("Reject")) {
       await this.click("[data-approval-key] button", "Reject");
-      state = await this.untilState(
-        "the approval answered",
-        (s) => s.approval.length === 0,
-        10_000,
-      );
+      await this.untilState("the approval answered", (s) => s.approval.length === 0, 10_000);
+      // The turn goes on with the answer (the mock replies at once): let it end.
+      state = await this.untilState("the turn over", (s) => !s.running, 10_000);
     }
     if (state.running) {
-      await this.click('[aria-label="Stop generating"]');
+      // The reply may end between the read and the click; Stop is pressed only if still there.
+      await this.evaluate(
+        `document.querySelector('[aria-label="Stop generating"]')?.click(), true`,
+      );
       state = await this.untilState("the reply stopped", (s) => !s.running, 10_000);
     }
     if ((state.editorText ?? "") !== "") state = await this.clearComposer();
