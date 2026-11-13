@@ -54,6 +54,13 @@ object LiveUpdates {
     val title: String,
     /** For [Kind.RUNNING], when the earliest running turn started (the computer's clock). */
     val since: Long,
+    /**
+     * For [Kind.RUNNING], whole minutes it has run: the chip's text. Android
+     * 16's status-bar chip shows no chronometer for an ongoing notification
+     * (observed on the 36.1 image: only the icon-less clock), so the chip
+     * carries the elapsed time as text, updated each minute.
+     */
+    val minutes: Long,
     /** Machines with something to show. */
     val machines: Int,
   )
@@ -178,6 +185,7 @@ object LiveUpdates {
       machineName = names[machineId] ?: machineId,
       title = active.getValue(machineId).titles[session].orEmpty(),
       since = since,
+      minutes = if (kind == Kind.RUNNING) (System.currentTimeMillis() - since).coerceAtLeast(0) / 60_000 else 0,
       machines = active.size,
     )
     // The oldest wait: one per machine is its first, so take the first machine that has one.
@@ -199,8 +207,13 @@ object LiveUpdates {
     val times = boards.values.flatMap { board ->
       board.finished.values.map { it.second + FINISHED_MS } + listOfNotNull(board.droppedAt?.plus(STALE_MS))
     }
+    // A running turn's chip counts minutes: the next whole minute of the earliest one.
+    val earliest = boards.values.flatMap { it.running.values }.minOrNull()
+    val minute = earliest?.let {
+      now + 60_000 - (System.currentTimeMillis() - it).coerceAtLeast(0) % 60_000
+    }
     // A stream that dropped long ago has expired already: nothing to wait for.
-    return times.filter { it > now }.minOrNull()
+    return (times + listOfNotNull(minute)).filter { it > now }.minOrNull()
   }
 
   /** Render again: the content, the app's switch or Android's promotion setting may have changed. */

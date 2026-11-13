@@ -6,12 +6,12 @@ CI publishes the section that matches a pushed `v<version>` tag as the descripti
 
 ### Changes
 
-- Android app: Live Updates on Android 16 QPR1 and later. While a machine runs a turn, waits for your approval or answer, or has just finished, the app's ongoing notification is promoted: a status-bar chip (a timer while it runs, "Approve" or "Answer" while it waits, "Done" for 15 s), a card at the top of the shade and on the lock screen (without names there). Tapping it opens that machine and Session. A "Live updates" switch under Settings turns it off; where Android has no Live Updates, or does not allow them for Kivotos, the switch is disabled and says why. Older Android versions are unchanged.
+- Android app: Live Updates on Android 16 QPR1 and later. While a machine runs a turn, waits for your approval or answer, or has just finished, the app's ongoing notification is promoted: a status-bar chip (the minutes the turn has run, "Approve" or "Answer" while it waits, "Done" for 15 s), a card at the top of the shade (with a running timer) and on the lock screen (without names there). Tapping it opens that machine and Session. A "Live updates" switch under Settings turns it off; where Android has no Live Updates, or does not allow them for Kivotos, the switch is disabled and says why. Older Android versions are unchanged.
 - Plugin: `/kivotos/events?running=1` also sends `running` and `idle` frames when a turn starts and ends. Without `running=1` the stream is as before, so older apps and the desktop board see no change.
 
 ### 中文
 
-- 安卓应用：Android 16 QPR1 及以上支持实时活动。某台机器正在运行、等你确认或回答、或刚完成时，应用的常驻通知会被提升为实时活动：状态栏胶囊（运行时计时，等待时显示「待确认」或「待回答」，完成后显示「完成」15 秒）、通知栏顶部和锁屏上的卡片（锁屏不显示名称）。点按打开对应的机器和会话。「设置」中的「实时活动」开关可以关闭它；系统不支持或不允许 Kivotos 使用实时活动时，开关不可用并说明原因。更早的安卓版本行为不变。
+- 安卓应用：Android 16 QPR1 及以上支持实时活动。某台机器正在运行、等你确认或回答、或刚完成时，应用的常驻通知会被提升为实时活动：状态栏胶囊（运行时显示已运行的分钟数，等待时显示「待确认」或「待回答」，完成后显示「完成」15 秒）、通知栏顶部（带计时）和锁屏上的卡片（锁屏不显示名称）。点按打开对应的机器和会话。「设置」中的「实时活动」开关可以关闭它；系统不支持或不允许 Kivotos 使用实时活动时，开关不可用并说明原因。更早的安卓版本行为不变。
 - 插件：`/kivotos/events?running=1` 会在回合开始和结束时额外发送 `running` 和 `idle` 帧。不带 `running=1` 时事件流与之前一致，旧版应用和桌面看板不受影响。
 
 ## v0.7.0

@@ -116,8 +116,12 @@ object Notifier {
     val chip = when (live.kind) {
       LiveUpdates.Kind.APPROVAL -> text("Approve", "待确认")
       LiveUpdates.Kind.QUESTION -> text("Answer", "待回答")
-      // The chip shows the chronometer instead.
-      LiveUpdates.Kind.RUNNING -> null
+      // How long the earliest turn has run, in whole minutes (the card keeps the chronometer).
+      LiveUpdates.Kind.RUNNING -> when {
+        live.minutes < 1 -> text("<1 min", "<1 分钟")
+        live.minutes < 60 -> text("${live.minutes} min", "${live.minutes} 分钟")
+        else -> text("${live.minutes / 60} h ${live.minutes % 60} min", "${live.minutes / 60} 小时 ${live.minutes % 60} 分")
+      }
       LiveUpdates.Kind.FINISHED -> text("Done", "完成")
       LiveUpdates.Kind.FAILED -> text("Failed", "失败")
     }
@@ -131,7 +135,7 @@ object Notifier {
       .setOnlyAlertOnce(true)
       .setCategory(if (live.kind == LiveUpdates.Kind.RUNNING) Notification.CATEGORY_PROGRESS else Notification.CATEGORY_STATUS)
       .apply {
-        if (chip != null) setShortCriticalText(chip)
+        setShortCriticalText(chip)
         if (live.kind == LiveUpdates.Kind.RUNNING) {
           // A start the computer's clock puts ahead of the phone's would count down.
           setWhen(minOf(live.since, System.currentTimeMillis())).setShowWhen(true).setUsesChronometer(true)
