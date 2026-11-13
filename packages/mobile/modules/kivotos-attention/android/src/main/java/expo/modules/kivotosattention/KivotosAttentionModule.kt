@@ -15,7 +15,10 @@ import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
+import androidx.core.graphics.Insets
 import androidx.core.os.bundleOf
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -177,10 +180,13 @@ class KivotosAttentionModule : Module() {
      * own visibility), so a page kept loaded off screen would keep rendering
      * and tell its document it is visible. `WebView.onPause` hides it
      * (`visibilityState` "hidden", timers throttled); its JS and connections
-     * keep running.
+     * keep running. Every page passes here at its load start, so this is also
+     * where its WebView is told the shell already pads the screen's edges
+     * ([leaveEdgesToShell]).
      */
     AsyncFunction("setPageVisible") { viewTag: Int, visible: Boolean ->
       val web = appContext.findView<View>(viewTag)?.let(::webViewIn) ?: return@AsyncFunction
+      leaveEdgesToShell(web)
       if (visible) web.onResume() else web.onPause()
     }.runOnQueue(Queues.MAIN)
 
@@ -233,6 +239,35 @@ class KivotosAttentionModule : Module() {
         }
       }
     }
+  }
+
+  /**
+   * Hand a page's WebView the window insets with the top and bottom of the
+   * system bars and the display cutout set to zero: MachineView's
+   * SafeAreaView already pads the page by them. Android still passes the
+   * WebView the whole window's insets, and WebView 136+ passes them on to the
+   * page (144+ in every WebView; some phones report them even where the
+   * WebView does not touch the bars), so the status bar's height could come
+   * out twice: a blank strip above dsh's header on a Xiaomi 15 Ultra. The
+   * left and right edges, which the shell does not pad, and the keyboard
+   * (ime), which drives WebView's visual viewport, pass through unchanged.
+   */
+  private fun leaveEdgesToShell(web: WebView) {
+    ViewCompat.setOnApplyWindowInsetsListener(web) { view, insets ->
+      val types = WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+      val sides = insets.getInsets(types)
+      val stable = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.systemBars())
+      val padded = WindowInsetsCompat.Builder(insets)
+        .setInsets(types, Insets.of(sides.left, 0, sides.right, 0))
+        .setInsetsIgnoringVisibility(
+          WindowInsetsCompat.Type.systemBars(),
+          Insets.of(stable.left, 0, stable.right, 0),
+        )
+        .setDisplayCutout(null)
+        .build()
+      ViewCompat.onApplyWindowInsets(view, padded)
+    }
+    ViewCompat.requestApplyInsets(web)
   }
 
   private fun webViewIn(view: View): WebView? {

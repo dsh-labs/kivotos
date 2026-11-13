@@ -2,6 +2,16 @@
 
 CI publishes the section that matches a pushed `v<version>` tag as the description of its GitHub Release. Write the section before tagging.
 
+## Unreleased
+
+### Fixes
+
+- Android: the blank strip above dsh's header is gone again on phones such as the Xiaomi 15 Ultra. The app already pads each page by the status bar, but Android still hands the page's WebView the whole window's insets, and newer WebViews apply them to the page, so the status bar's height showed twice once 0.7.0 dropped `viewport-fit=cover`. The app now zeroes the top and bottom of the system bars and the display cutout before they reach each page's WebView; the keyboard and the left and right edges pass through.
+
+### 中文
+
+- 修复：Android 上 dsh 顶栏上方的空白条不再出现（如小米 15 Ultra）。App 已按状态栏高度为每个页面留白，但 Android 仍把整个窗口的 inset 交给页面的 WebView，较新的 WebView 会把它用到页面上，0.7.0 去掉 `viewport-fit=cover` 后状态栏高度又出现了两次。App 现在在 inset 传给每个页面的 WebView 之前，把系统栏和刘海的上下部分清零；键盘和左右两边不受影响。
+
 ## v0.7.0
 
 ### Breaking changes
