@@ -81,14 +81,17 @@ test("parseLabBanner reads dev.mjs's banner, and nothing before it is complete",
   assert.equal(parseLabBanner(BANNER.slice(0, BANNER.indexOf("  invite"))), undefined);
 });
 
-test("mockPatch makes the mock the default model and loads it by absolute path", () => {
+test("mockPatch makes the mock the default model, pins Documents and loads the mock by absolute path", () => {
   assert.equal(
-    mockPatch("/tmp/e2e/mock-llm.mjs"),
+    mockPatch("/tmp/e2e/mock-llm.mjs", "/tmp/e2e/documents"),
     [
       "- id: agent-default-model",
       "  config:",
       "    provider: lab-mock",
       "    model: lab-mock",
+      "- id: workspace-controller",
+      "  config:",
+      '    documentsDirectory: "/tmp/e2e/documents"',
       "- insert:",
       "    - id: kivotos-e2e-mock-llm",
       '      name: "/tmp/e2e/mock-llm.mjs"',

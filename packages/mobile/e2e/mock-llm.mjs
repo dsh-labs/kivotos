@@ -6,6 +6,7 @@
 // - A prompt containing "slow" streams "tick N" once a second for five
 //   minutes: a running reply with nothing pending.
 // - A prompt containing "ask me" asks a question (ask_user_question).
+// - A prompt containing "say done" replies "done" at once: a finished turn.
 // - Any other prompt requests an escalated bash call, which waits for approval.
 import { LlmAdapter } from "@deepseek-ai/dsh-llm";
 
@@ -91,6 +92,7 @@ class E2eMock extends LlmAdapter {
       options.messages.filter((message) => message.role === "user").map((m) => m.content),
     );
     if (said.includes("slow")) yield* slow(options.signal);
+    else if (said.includes("say done")) yield* text("done");
     else yield* toolCall(said.includes("ask me"));
   }
 }

@@ -108,6 +108,8 @@ interface PageState {
   vis: string;
   /** Whether dsh's shell (its composer) is up. */
   shell: boolean;
+  /** Whether the Session is empty: dsh shows its hero composer until the first prompt. */
+  hero: boolean;
   drawerOpen: boolean | null;
   menus: number;
   switcher: boolean;
@@ -141,6 +143,7 @@ const STATE = `(() => {
   return {
     vis: document.visibilityState,
     shell: editor !== null,
+    hero: document.querySelector('[class*="_composerHero"]') !== null,
     drawerOpen: frame ? !frame.hasAttribute("data-sidebar-collapsed") : null,
     menus: all("[role=menu]").length,
     switcher: document.querySelector(".kivotos-machines-list") !== null,
@@ -491,6 +494,9 @@ class Run {
 
   /** Starts a new Session, so a prompt's turn is the only one in it. */
   async newSession(): Promise<void> {
+    // dsh opens no new Session from an empty one: that one is already what is asked for.
+    const now = await this.state();
+    if (now.shell && now.hero && !now.running && now.approval.length === 0) return;
     const current = `localStorage.getItem("dsh.sessions.current")`;
     const before = await this.evaluate<string | null>(current);
     await this.evaluate(
@@ -503,9 +509,26 @@ class Run {
     );
     await this.untilState(
       "an empty Session",
-      (s) => s.shell && !s.running && s.approval.length === 0 && s.ticks === -1,
+      (s) => s.shell && s.hero && !s.running && s.approval.length === 0 && s.ticks === -1,
       10_000,
     );
+  }
+
+  /**
+   * Makes sure the current Session has a finished turn, so that dsh shows its
+   * header and lists it in the drawer; an empty one gets a prompt the mock
+   * answers at once.
+   */
+  async sessionWithTurn(): Promise<void> {
+    if (!(await this.state()).hero) return;
+    const marker = this.marker();
+    await this.send(`say done ${marker}`);
+    await this.until(
+      "dsh to end the turn",
+      async () => this.lab.turn(marker).ended !== undefined,
+      30_000,
+    );
+    await this.untilState("the Session with its turn", (s) => !s.hero && !s.running, 10_000);
   }
 
   /** Empties the composer. execCommand("delete") misses Lexical's own selection, so set its state. */
@@ -699,6 +722,7 @@ const CASES: Case[] = [
     id: "header-menu",
     state: "header menu",
     async run(run) {
+      await run.sessionWithTurn();
       await openMenu(run, '[aria-label="More actions"]');
       await run.back();
       return run.stays("menu closed", (s) => s.menus === 0);
@@ -712,7 +736,10 @@ const CASES: Case[] = [
   {
     id: "row-menu",
     state: "row menu (Session actions)",
-    run: (run) => menuInDrawer(run, '[aria-label^="Session actions for"]'),
+    async run(run) {
+      await run.sessionWithTurn();
+      return menuInDrawer(run, '[aria-label^="Session actions for"]');
+    },
   },
   {
     id: "drawer",

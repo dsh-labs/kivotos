@@ -102,7 +102,8 @@ export function dshLlmOf(dsh: string): string {
 
 /**
  * Puts a copy of mock-llm.mjs into `dir` with dsh's own dsh-llm linked
- * beside it, and writes the patch layer that loads it.
+ * beside it, and writes the patch layer that loads it and points dsh's
+ * Documents directory at `dir`/documents.
  * @returns the patch file.
  */
 export function prepareMock(dir: string, dsh: string): string {
@@ -111,8 +112,10 @@ export function prepareMock(dir: string, dsh: string): string {
   symlinkSync(dshLlmOf(dsh), path.join(scope, "dsh-llm"), "dir");
   const mock = path.join(dir, "mock-llm.mjs");
   copyFileSync(path.join(here, "mock-llm.mjs"), mock);
+  const documents = path.join(dir, "documents");
+  mkdirSync(documents, { recursive: true });
   const patch = path.join(dir, "mock.patch.yml");
-  writeFileSync(patch, mockPatch(mock));
+  writeFileSync(patch, mockPatch(mock, documents));
   return patch;
 }
 

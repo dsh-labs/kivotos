@@ -109,15 +109,21 @@ export function parseLabBanner(output: string): LabBanner | undefined {
 }
 
 /**
- * The cordis patch layer that makes the mock model (mock-llm.mjs) dsh's
- * default; dev.mjs appends it to the lab's own layer.
+ * The cordis patch layer dev.mjs appends to the lab's own: it makes the mock
+ * model (mock-llm.mjs) dsh's default, and names the Documents directory dsh
+ * makes its first Workspace in. Without one dsh asks the OS (`xdg-user-dir`
+ * on Linux), and a host with no Documents directory, such as a CI runner,
+ * gets no Workspace and so no Session: the composer stays inert.
  */
-export function mockPatch(mockFile: string): string {
+export function mockPatch(mockFile: string, documentsDir: string): string {
   return [
     "- id: agent-default-model",
     "  config:",
     "    provider: lab-mock",
     "    model: lab-mock",
+    "- id: workspace-controller",
+    "  config:",
+    `    documentsDirectory: ${JSON.stringify(documentsDir)}`,
     "- insert:",
     "    - id: kivotos-e2e-mock-llm",
     `      name: ${JSON.stringify(mockFile)}`,
