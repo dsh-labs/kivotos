@@ -1,6 +1,6 @@
 /**
- * Attention events: approvals, user questions, and finished turns, derived
- * from the durable `session/event` feed of every Session on this Host —
+ * Attention events: approvals, user questions, running and finished turns,
+ * derived from the durable `session/event` feed of every Session on this Host —
  * including Sessions no browser has open — and fanned out to subscribers
  * (the Android app's event stream).
  *
@@ -9,8 +9,24 @@
  * `@deepseek-ai/dsh-user-approval` / `-user-questions`).
  */
 
-/** What a frame tells the phone. */
-export type AttentionKind = "approval" | "question" | "done" | "failed" | "resolved";
+/**
+ * What a frame tells the phone. `running` (a turn started) and `idle` (it
+ * ended, however) are state for the app's live update, not news: only a
+ * subscriber that asks for them gets them ({@link isTurnState}).
+ */
+export type AttentionKind =
+  | "approval"
+  | "question"
+  | "done"
+  | "failed"
+  | "resolved"
+  | "running"
+  | "idle";
+
+/** Whether the kind says if a turn runs: sent only to subscribers that ask. */
+export function isTurnState(kind: AttentionKind): boolean {
+  return kind === "running" || kind === "idle";
+}
 
 /** One frame of the attention stream. */
 export interface AttentionFrame {
@@ -24,7 +40,7 @@ export interface AttentionFrame {
   title: string;
   /**
    * Waiting-item identity: the approval request id or the question call id.
-   * A later `resolved` frame carries the same key; `done`/`failed` carry `turn:<n>`.
+   * A later `resolved` frame carries the same key; `done`/`failed`/`running`/`idle` carry `turn:<n>`.
    */
   key: string;
   /** Human text: the approval reason or tool, the question, or the failure. */
@@ -35,6 +51,7 @@ export interface AttentionFrame {
    * is a reminder only.
    */
   approval?: { token: string; callId: string; toolName: string };
+  /** When it happened; for `running`, when the turn started. */
   time: number;
 }
 
@@ -56,6 +73,8 @@ interface SessionState {
   approvals: Map<string, { detail: string; callId?: string; toolName: string }>;
   /** Open questions by tool call id. */
   questions: Map<string, string>;
+  /** The `running` frame of the turn in progress, if one is. */
+  running?: AttentionFrame;
 }
 
 const ASK_USER_QUESTION = "ask_user_question";
@@ -123,9 +142,25 @@ export class AttentionTracker {
     );
   }
 
-  /** @returns frames newer than `afterId`, oldest first. */
-  since(afterId: number): AttentionFrame[] {
-    return this.history.filter((frame) => frame.id > afterId);
+  /**
+   * @param afterId - the subscriber's cursor.
+   * @param turnState - include `running` and `idle` frames; the `running`
+   *   frame of every turn still in progress is included even when it left the
+   *   history, so a subscriber that replays from 0 learns what runs now.
+   * @returns frames newer than `afterId`, oldest first.
+   */
+  since(afterId: number, turnState = false): AttentionFrame[] {
+    const frames = this.history.filter(
+      (frame) => frame.id > afterId && (turnState || !isTurnState(frame.kind)),
+    );
+    if (!turnState) return frames;
+    const oldest = this.history[0]?.id ?? this.next;
+    const dropped = [...this.sessions.values()].flatMap((state) =>
+      state.running !== undefined && state.running.id < oldest && state.running.id > afterId
+        ? [state.running]
+        : [],
+    );
+    return dropped.length === 0 ? frames : [...dropped, ...frames].sort((a, b) => a.id - b.id);
   }
 
   /** @returns unsubscribe. */
@@ -134,8 +169,10 @@ export class AttentionTracker {
     return () => this.subscribers.delete(listener);
   }
 
-  /** Forget a session that left the store. */
+  /** Forget a session that left the store; a turn it ran cannot go on. */
   forget(sessionId: string): void {
+    const running = this.sessions.get(sessionId)?.running;
+    if (running !== undefined) this.emit("idle", sessionId, running.key, "", Date.now());
     this.sessions.delete(sessionId);
   }
 
@@ -193,9 +230,24 @@ export class AttentionTracker {
         this.emit("resolved", session.id, callId, "", event.time);
         return;
       }
-      case "turn/end":
+      case "turn/start":
+        // A second start without an end (a crash closer the feed missed) replaces the first.
+        state.running = this.emit(
+          "running",
+          session.id,
+          `turn:${String(data.turn)}`,
+          "",
+          event.time,
+        );
+        return;
+      case "turn/end": {
+        // Any end, a stop or a crash closer included, ends what runs.
+        const running = state.running;
+        state.running = undefined;
+        if (running !== undefined) this.emit("idle", session.id, running.key, "", event.time);
         this.turnEnded(session.id, data, event.time);
         return;
+      }
       default:
     }
   }
@@ -229,7 +281,7 @@ export class AttentionTracker {
     detail: string,
     time: number,
     callId?: string,
-  ): void {
+  ): AttentionFrame {
     const approval = kind === "approval" ? this.approvableOf(callId) : undefined;
     const frame: AttentionFrame = {
       id: this.next++,
@@ -245,6 +297,7 @@ export class AttentionTracker {
     this.history.push(frame);
     if (this.history.length > HISTORY) this.history.shift();
     for (const listener of this.subscribers) listener(frame);
+    return frame;
   }
 }
 
