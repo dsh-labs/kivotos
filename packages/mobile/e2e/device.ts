@@ -81,6 +81,26 @@ export class Device {
     await this.shell(`input text ${inputTextArgument(text)}`);
   }
 
+  /**
+   * Hides the soft keyboard when it is shown (`mInputShown` in `dumpsys
+   * input_method`), so a tap below it reaches the app: on a small screen the
+   * keyboard covers the app's buttons, and a tap there hits a keyboard key
+   * or its toolbar instead.
+   * @throws when the keyboard is still shown after `timeoutMs`.
+   */
+  async hideKeyboard(timeoutMs = 10_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    let pressed = false;
+    while (/\bmInputShown=true\b/.test(await this.shell("dumpsys input_method"))) {
+      if (Date.now() > deadline)
+        throw new Error(`the keyboard is still shown after ${timeoutMs} ms`);
+      // One Back closes the keyboard and nothing else; a second would leave the screen.
+      if (!pressed) await this.back();
+      pressed = true;
+      await sleep(300);
+    }
+  }
+
   /** @returns the window that has the focus, as `dumpsys window` names it. */
   async focusedWindow(): Promise<string> {
     const out = await this.shell("dumpsys window windows");

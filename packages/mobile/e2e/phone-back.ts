@@ -975,6 +975,7 @@ async function joinNetwork(device: Device, invite: string, scale: number): Promi
     }
   }
   if (!typed) throw new Error("could not type the invite into the app");
+  await device.hideKeyboard();
   await device.tapNode(
     await device.waitForNode("Join", (nodes) => nodes.find((n) => n.text === "Join"), timeout),
   );
