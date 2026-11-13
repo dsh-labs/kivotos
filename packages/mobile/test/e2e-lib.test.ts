@@ -10,6 +10,7 @@ import {
   mockPatch,
   parseLabBanner,
   parseUiNodes,
+  postedNotifications,
   sessionEvents,
   turnFacts,
 } from "../e2e/lib.ts";
@@ -32,11 +33,48 @@ test("parseUiNodes reads text, label, class, focus and bounds, unescaping entiti
     desc: "",
     className: "android.widget.TextView",
     focused: false,
+    checked: false,
     bounds: [42, 307, 1038, 439],
   });
   const field = nodes.find((node) => node.className === "android.widget.EditText");
   assert.equal(field?.text, 'kivotos://join?relay=ws%3A%2F%2F127.0.0.1&key=a"b');
   assert.equal(field?.focused, true);
+});
+
+const NOTIFICATIONS = `Current Notification Manager state:
+  Notification List:
+    NotificationRecord(0x0ae8f69e: pkg=android user=UserHandle{-1} id=55 tag=null importance=2 key=-1|android|55|null|1000: Notification(channel=DEVELOPER shortcut=null contentView=null vibrate=null sound=null tick defaults=0 flags=ONGOING_EVENT|CAN_COLORIZE color=0x00000000 vis=PUBLIC))
+      uid=1000 userId=-1
+      flags=ONGOING_EVENT|CAN_COLORIZE
+    NotificationRecord(0x0ae8f69f: pkg=com.rinai.kivotos user=UserHandle{0} id=7380 tag=null importance=3 key=0|com.rinai.kivotos|7380|null|10210: Notification(channel=live shortcut=null contentView=null vibrate=null sound=null defaults=0 flags=ONGOING_EVENT|NO_CLEAR|FOREGROUND_SERVICE|PROMOTED_ONGOING color=0xff3478db vis=PRIVATE publicVersion=Notification(channel=live))
+      notification=
+            extras={
+                android.title=String (lab-a · Fix login)
+                android.text=String (Waiting for your approval)
+                android.shortCriticalText=String (Approve)
+                android.showChronometer=Boolean (false)
+            }
+      publicNotification=
+            extras={
+                android.title=String (Kivotos)
+            }
+  Snoozed notifications:
+    NotificationRecord(0x0ae8f69f: pkg=com.rinai.kivotos user=UserHandle{0} id=7380 tag=null importance=3 key=0|com.rinai.kivotos|7380|null|10210: Notification(channel=live shortcut=null contentView=null vibrate=null sound=null defaults=0 flags=ONGOING_EVENT color=0xff3478db vis=PRIVATE))
+`;
+
+test("postedNotifications reads a package's records once, with flags, chip and own extras", () => {
+  assert.deepEqual(postedNotifications(NOTIFICATIONS, "com.rinai.kivotos", 7380), [
+    {
+      channel: "live",
+      flags: ["ONGOING_EVENT", "NO_CLEAR", "FOREGROUND_SERVICE", "PROMOTED_ONGOING"],
+      title: "lab-a · Fix login",
+      text: "Waiting for your approval",
+      chip: "Approve",
+      chronometer: false,
+    },
+  ]);
+  assert.deepEqual(postedNotifications(NOTIFICATIONS, "com.rinai.kivotos", 1), []);
+  assert.equal(postedNotifications(NOTIFICATIONS, "android").length, 1);
 });
 
 test("machineRows lists the named machine's buttons topmost first; centerOf taps the middle", () => {
