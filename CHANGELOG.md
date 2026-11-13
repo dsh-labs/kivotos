@@ -2,7 +2,7 @@
 
 CI publishes the section that matches a pushed `v<version>` tag as the description of its GitHub Release. Write the section before tagging.
 
-## Unreleased
+## v0.7.0
 
 ### Breaking changes
 
@@ -10,11 +10,13 @@ CI publishes the section that matches a pushed `v<version>` tag as the descripti
 
 ### Fixes
 
+- Android: Back closes what is open with dsh's own Escape instead of Kivotos' own model of dsh's layers (#66). Open layers are found by ARIA alone (`[role=menu]`, `[aria-modal="true"]`, the machine switcher, and the composer's `/` and `@` suggestions while its editor has focus), and one Escape goes to the focused element inside the top layer, or to the layer itself; dsh decides what it closes. With nothing open no key is sent, so Back never rejects a pending approval or counts toward stopping a reply, and an Escape no layer takes is stopped before it reaches dsh's shortcuts. The switcher now takes Escape before the drawer, so one Back closes only the switcher. `kivotos.layers` now carries the number of open layers.
 - Opening Settings on a phone no longer shows "Part of dsh changed, so Kivotos turned off: Full-screen Settings on phones". The notice was not a glitch: since 0.2.2-rc.1 dsh lays out Settings for a phone itself and dropped the `_content` wrapper the probe asked for, so the probe failed on every open, in every section. Kivotos' phone Settings stylesheet and its probe are gone; dsh's own full-screen panel stays.
 - A failure of a page probe now has to last a second, reading after reading, before Kivotos turns the feature off; a panel caught mounting or animating can no longer trip the notice.
 
 ### Changes
 
+- Contributors: `npm run e2e:phone` runs an Android end-to-end test of the hardware Back in 17 states (menus, drawer, Settings, modals, the switcher, the model select, the `/` popup, nothing open, a double press, a pending approval, a running reply, the preview notice, and Settings opened across its sections without a compat notice). It starts its own relay and dsh with a mock model, installs the app on an emulator and drives the page over CDP; WebView inspection is an opt-in build flag a release never gets. The `Phone e2e` workflow runs it on an Android emulator for pull requests that touch the phone or the plugin's Back code, nightly, and on demand (#71).
 - The phone layout is dsh's own. dsh 0.2.2-rc.2 already turns the sidebar into a drawer below 768 px, with its own opener, mask and close on select, shows Settings full screen with its sections as a tab row, and does not focus the composer by itself on a phone. Kivotos' drawer stylesheet, drawer toggle (which sat on top of dsh's opener), backdrop, close-on-select, Settings stylesheet and composer-focus guard are removed, with the `phone-layout` and `phone-settings` compatibility points.
 - Kept, because dsh does not do them: the welcome page's hero pinned near the top of a phone's screen, a conversation scroller that does not drag the page, touch rules, and Enter as a line break in the phone's composer.
 - The served viewport no longer extends under the phone's cutout (`viewport-fit=cover` is dropped; `interactive-widget=resizes-content` stays), so the page pads no safe area itself: a phone's browser keeps the page inside it, and the app's shell already pads its WebView.
@@ -26,9 +28,11 @@ CI publishes the section that matches a pushed `v<version>` tag as the descripti
 ### 中文
 
 - 不兼容变更：不再支持 DeepSeek Harness 0.2.1，`engines.dsh` 改为 `>=0.2.2-rc.1 <0.3.0-0`（原为 `>=0.2.1-rc.5 <0.3.0-0`）。Kivotos 现在依赖 dsh 自带的手机布局（抽屉侧边栏及其打开按钮、遮罩、选中后收起，全屏 Settings），该布局从 0.2.2-rc.1 开始提供，0.2.1-rc.5 没有，而 Kivotos 已不再自带。范围由 dsh 自己检查：在旧版 dsh 上安装此版本会以 `incompatible-version` 拒绝，已安装的副本在启动时被停用（stderr 输出 `disabling profile plugin`），除非用 `dsh plugin allow-version` 豁免该确切版本。请升级到 dsh 0.2.2-rc.1 或更高版本，或继续使用 Kivotos 0.6.2。
+- 修复：Android「返回」改用 dsh 自己的 Esc 关闭弹层，不再自建 dsh 弹层模型（#66）。只按 ARIA 判断打开了什么（菜单、模态框、机器切换器，以及输入框聚焦时的 `/`、`@` 补全），向最上层发一次 Esc，由 dsh 决定关闭哪一层；没有打开任何东西时不发按键，因此「返回」不会拒绝待审批的操作，也不会计入停止回复，未被任何弹层处理的 Esc 不会传到 dsh 的快捷键。切换器先于侧栏处理 Esc，一次「返回」只关闭切换器。
 - 修复：手机上打开 Settings 不再提示「dsh 的内部结构有变，Kivotos 已停用：手机全屏设置页」。dsh 自 0.2.2-rc.1 起自带手机版 Settings 并移除了探测所需的 `_content` 包装层，探测每次打开都会失败。Kivotos 的手机 Settings 样式和探测已删除，使用 dsh 自己的全屏面板。
 - 修复：页面探测的失败需要持续一秒、连续多次读数一致才会停用功能，面板挂载或动画中的瞬间状态不再触发提示。
 - 变更：手机布局交给 dsh 自己：抽屉侧边栏、打开按钮、遮罩、选中后收起、全屏 Settings、手机上不自动聚焦输入框，dsh 0.2.2-rc.2 均已自带。Kivotos 删除了对应的抽屉样式、抽屉按钮（之前与 dsh 的按钮重叠）、遮罩、选中收起、Settings 样式和输入框聚焦拦截，以及 `phone-layout`、`phone-settings` 兼容点。保留 dsh 没有的部分：欢迎页置顶、会话滚动不带动页面、触控规则、手机输入框回车换行。视口不再使用 `viewport-fit=cover`，页面不再自行留出安全区域。
+- 贡献者：新增 `npm run e2e:phone`，在安卓模拟器上端到端测试 17 种状态下的硬件「返回」（菜单、侧栏、设置、弹窗、切换器、模型选择、`/` 补全、无弹层、连按两次、待审批、回复进行中、预览通知、多次打开设置无兼容提示）；`Phone e2e` 工作流在改动手机端或「返回」相关代码的 PR、每晚和手动触发时运行（#71）。
 
 ## v0.6.2
 
