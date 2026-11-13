@@ -2,7 +2,7 @@
 
 CI publishes the section that matches a pushed `v<version>` tag as the description of its GitHub Release. Write the section before tagging.
 
-## Unreleased
+## v0.6.2
 
 ### Highlights
 
@@ -16,17 +16,20 @@ CI publishes the section that matches a pushed `v<version>` tag as the descripti
 ### Fixes
 
 - Android: Back on a machine's page no longer opens dsh's sidebar (#61). It closes the topmost thing open over the conversation (a menu or the machine switcher, a dialog with a close button, Settings, then the drawer, which Back used to leave open and spend), and with nothing open it leaves the page: a peer's page goes to its computer's page, a row's page to the machine list. A dialog without a close button (the preview notice) no longer holds Back. The page now pushes what is open to the app, which decides on Back at once instead of asking the page within 400 ms: Back no longer leaves a slow page while something is open, a page with nothing open is left with no wait, and two quick presses are two steps. A page from an older Kivotos is still asked, with the timeout. Back also closes menus and dialogs at tablet widths and when the phone-layout probe fails, where it used to leave the page with them open. The page now goes before the WebView's history.
+- The phone's machine switcher no longer routes a switch through a computer's mount when the phone has its own reachable row for that machine (#60). A computer's mount is taken only when it lists the target over Tailscale; when a mount's page fails on screen and the phone's own row is reachable, that row is shown instead, the mount is dropped and the machine leaves `kivotos.recent` for that computer.
 
 ### Compatibility
 
-- DeepSeek Harness `>=0.2.1-rc.5 <0.3.0-0` (verified on 0.2.1-rc.5, 0.2.2-rc.1 and 0.2.2-rc.2). The Android app and the relay are unchanged; a 0.3.0 app and relay keep working with this plugin.
+- DeepSeek Harness `>=0.2.1-rc.5 <0.3.0-0` (verified on 0.2.1-rc.5, 0.2.2-rc.1 and 0.2.2-rc.2). The relay is unchanged; a 0.3.0 app and relay keep working with this plugin.
 - Known gap, unchanged by this release: the full-screen phone Settings panel has been off since 0.2.2-rc.1. Its probe asks for the `_content` wrapper that 0.2.2 removed from the Settings panel (0.2.1-rc.2 still had it), so the `phone-settings` point reports `changed` at run time and its stylesheet is withheld; the panel renders as dsh's own centered dialog on a phone. Tracked for a follow-up, not fixed here.
 
 ### 中文
 
 - 支持 DeepSeek Harness 0.2.2-rc.2（npm `next` 标签当前指向的版本）：固定 index 夹具改为从 0.2.2-rc.2 采集（插件批次现在为 57 + 17 行），`PINNED_DSH` 钉到 0.2.2-rc.2，注释、文档与 issue 模板里的目标版本字样同步更新；0.2.2-rc.1 仍然可用，其 index 夹具保留在测试里作为回归基线。
 - 已在新版本上重新验证：index 改写（viewport、manifest、boot graph、boot gate）、页面探测、桌面启动保护和全部适配器标记仍与 0.2.2-rc.2 的产物一致。适配器唯一的改动是 `session-store` 标记：0.2.2-rc.2 的客户端 bundle 用反引号书写字符串字面量，因此存储键改为不带引号的匹配形式。该版本升级说明中没有触及任何耦合点（见「兼容性」）。
-- 兼容范围不变：`>=0.2.1-rc.5 <0.3.0-0`（已在 0.2.1-rc.5、0.2.2-rc.1、0.2.2-rc.2 上验证）。Android 应用与 relay 未改动，0.3.0 的应用和 relay 仍可用。
+- Android：「返回」不再打开 dsh 侧栏（#61）。它先关掉当前打开的那一层（菜单、机器切换器、带关闭按钮的对话框、设置、侧栏），没有可关的就离开页面；页面把当前打开的状态推给 App、由 App 立即决定，不再在 400 ms 内询问页面，慢页面不会被提前离开，连按两次就是两步。
+- 手机切换机器时不再绕道电脑的挂载点（#60）：只有那台电脑通过 Tailscale 直达目标时才走它的挂载；挂载页面在屏幕上加载失败而手机自己有可达条目时，直接显示手机自己的条目、丢弃挂载，并把该机器从这台电脑的 `kivotos.recent` 移除。
+- 兼容范围不变：`>=0.2.1-rc.5 <0.3.0-0`（已在 0.2.1-rc.5、0.2.2-rc.1、0.2.2-rc.2 上验证）。relay 未改动，0.3.0 的应用和 relay 仍可用。
 - 已知问题（本次未改动）：手机全屏 Settings 面板从 0.2.2-rc.1 起一直处于关闭状态。它的探测要求 Settings 面板里的 `_content` 包装层，而 0.2.2 已移除该层（0.2.1-rc.2 还有），因此运行时 `phone-settings` 报告 `changed`、对应样式表被禁用，手机上面板按 dsh 自己的居中对话框渲染。留待后续单独修复。
 
 ## v0.6.1
