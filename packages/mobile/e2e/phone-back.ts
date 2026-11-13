@@ -368,32 +368,36 @@ class Run {
     } catch {
       // the page went away; find it again
     }
-    let failure: unknown;
+    const failures: string[] = [];
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         if (!(await this.device.focusedWindow()).includes(PACKAGE)) {
           await this.device.shell(`am start -W -n ${ACTIVITY}`, this.ms(30_000));
         }
-        if (this.row === undefined || attempt > 0) {
-          this.row = await this.device.waitForNode(
-            "machine row",
-            (nodes) => machineRows(nodes, hostname())[0],
-            this.ms(30_000),
+        // A retry after a slow load finds the page already on screen, with no row to tap.
+        this.page = attempt > 0 ? await this.visiblePage().catch(() => undefined) : undefined;
+        if (this.page === undefined) {
+          if (this.row === undefined || attempt > 0) {
+            this.row = await this.device.waitForNode(
+              "machine row",
+              (nodes) => machineRows(nodes, hostname())[0],
+              this.ms(30_000),
+            );
+          }
+          await this.device.tapNode(this.row);
+          this.page = await this.until(
+            "the machine's page on screen",
+            () => this.visiblePage(),
+            15_000,
           );
         }
-        await this.device.tapNode(this.row);
-        this.page = await this.until(
-          "the machine's page on screen",
-          () => this.visiblePage(),
-          15_000,
-        );
         await this.untilState("dsh's shell", (state) => state.shell, 60_000);
         return;
       } catch (error) {
-        failure = error;
+        failures.push(`attempt ${attempt + 1}: ${String(error)}`);
       }
     }
-    throw new Error(`cannot show the machine's page: ${String(failure)}`, { cause: failure });
+    throw new Error(`cannot show the machine's page: ${failures.join("; ")}`);
   }
 
   /** Starts recording what the page posts about Back. */
