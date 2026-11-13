@@ -93,6 +93,16 @@ On an Apple silicon Mac under memory pressure, an emulator with host GPU renderi
 
 A last state opens Settings five times across its sections and requires that no Kivotos compat notice (`.kivotos-compat`, "Part of dsh changed…") and no `slot entry crashed` showed up, in the page or in its console. `packages/mobile/metro.config.js` makes the flag part of Metro's cache key: Metro caches transforms by file contents, not by the environment, so without it a plain build after an inspection build would reuse the inlined `true`. On an emulator image built `userdebug` (the google_apis images), every WebView is inspectable whatever the flag; only a `user` build (a phone) tells the two apart.
 
+The four `live-*` states check the app's Live Update (`packages/mobile/e2e/live.ts`). Each starts a turn in a new Session with a prompt holding `liveupdate` (the mock streams for eight seconds, then asks for approval), sends the app to the launcher and reads the app's ongoing notification from `adb shell dumpsys notification --noredact`: `live-running` wants it on the `live` channel with the `PROMOTED_ONGOING` flag (`Notification.FLAG_PROMOTED_ONGOING`), `android.showChronometer` and the chip (`android.shortCriticalText`) "<1 min", `live-waiting` the chip "Approve", `live-finished` (the approval allowed on the page) "Done" and, within 25 s, the quiet service notification again, and `live-off` (the Live updates switch off) no promotion. For each chip they also require SystemUI to draw it, with the app in the background: a `com.android.systemui` node of the window dump showing the text, else a chip line of `dumpsys activity service com.android.systemui` naming it. With `--shots DIR` they save the screen (the status-bar chip) and the opened shade as `DIR/<state>-chip.png` and `-shade.png`, and SystemUI's chip lines as `<state>-systemui.txt` when the chip was not found. On an Android without Live Updates (before 16 QPR1), the same states pass only when nothing changed: the Live updates switch disabled with "Needs Android 16 or later" under it (scrolled into view on a short screen), the service notification as before, nothing promoted, no `live` channel. Promotion needs an Android 16 QPR1 image (`system-images;android-36.1;google_apis;arm64-v8a`, or `x86_64` on Linux); the app runs in English there, so the chip texts are the English ones:
+
+```sh
+sdkmanager "system-images;android-36.1;google_apis;arm64-v8a"
+avdmanager create avd -n kivotos-live -k "system-images;android-36.1;google_apis;arm64-v8a" -d pixel_6
+npm run e2e:phone -- --apk app.apk --avd kivotos-live --only live-running,live-waiting,live-finished,live-off --shots shots --expect-live
+```
+
+`--expect-live` makes those states fail when the device has no Live Updates, instead of passing because nothing changed; the API 36.1 CI job passes it. Locally on macOS 27 the 36.1 arm64 image does not boot: the emulator (37.2.13) logs "hvf is not enabled on this aarch64 host", falls back to TCG and never finishes booting ([Google issue 567993833](https://issuetracker.google.com/issues/567993833)), while the API 35 image on the same host runs with HVF. Until that is fixed, the promoted states run on CI only (x86_64 with KVM); locally, run the full set on API 35, where the Live Update states check that nothing changed.
+
 ## Relay (`packages/relay/`)
 
 The relay is deliberately split into domain packages — `wire`, `registry`, `admission`, `tunnel`, `admin`, `config`, `cmd` — instead of the single flat root package the Go skill recommends by default. Dependencies point one way: `wire` is imported by all; `registry`, `admission` and `tunnel` never import each other (they meet through interfaces declared by the consumer); `admin` sits on `registry` and `tunnel`; `cmd` assembles everything. Put a change in the package that owns the thing it changes, and keep that shape.
@@ -113,14 +123,15 @@ Open the PR against `main`, in English, and say what the change does and how you
 
 A PR runs these CI jobs; all of them must pass:
 
-| Job                                   | What it checks                                                                                                    |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `check (node 22)`, `check (node 24)`  | format, lint, typecheck, the dsh boundary, the built `dist/`, `npm test`                                          |
-| `relay (go)`                          | `gofmt -l`, `go vet`, `go test -race`, a build, the container image starting, and the compose file                |
-| `relay image`                         | the relay image builds for amd64 and arm64 (pushed only on `main` and tags)                                       |
-| `android apk`                         | `expo prebuild` and `gradlew assembleRelease`; uploads the APK as an artifact                                     |
-| `dsh compatibility` (nightly)         | boots the npm `latest`/`next` dsh with the plugin and checks every coupling point (`scripts/dsh-compat.mjs`)      |
-| `phone e2e (API 35)` (nightly, paths) | builds the inspection APK and runs `npm run e2e:phone` on an emulator (see [Phone e2e](#phone-e2e-hardware-back)) |
+| Job                                     | What it checks                                                                                                               |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `check (node 22)`, `check (node 24)`    | format, lint, typecheck, the dsh boundary, the built `dist/`, `npm test`                                                     |
+| `relay (go)`                            | `gofmt -l`, `go vet`, `go test -race`, a build, the container image starting, and the compose file                           |
+| `relay image`                           | the relay image builds for amd64 and arm64 (pushed only on `main` and tags)                                                  |
+| `android apk`                           | `expo prebuild` and `gradlew assembleRelease`; uploads the APK as an artifact                                                |
+| `dsh compatibility` (nightly)           | boots the npm `latest`/`next` dsh with the plugin and checks every coupling point (`scripts/dsh-compat.mjs`)                 |
+| `phone e2e (API 35)` (nightly, paths)   | builds the inspection APK and runs `npm run e2e:phone` on an emulator (see [Phone e2e](#phone-e2e-hardware-back))            |
+| `phone e2e (API 36.1)` (nightly, paths) | the same on Android 16 QPR1, the Live Update states only, where the notification must be promoted; uploads their screenshots |
 
 Pushes to `main` and `v*` tags additionally publish the image, and a tag also publishes the npm package and the GitHub Release (`publish npm package`, `publish GitHub Release`). Do not tag or release from a PR.
 

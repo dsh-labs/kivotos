@@ -20,6 +20,8 @@ data class AttentionFrame(
   val detail: String,
   /** Present only when the Host holds this ask for the phone; absent = reminder only. */
   val approval: ApprovalAction? = null,
+  /** When it happened (the computer's clock, ms); for `running`, when the turn started. */
+  val time: Long = 0,
 ) {
   companion object {
     /** @return the frame, or null for malformed data (never thrown into the stream loop). */
@@ -40,6 +42,7 @@ data class AttentionFrame(
             toolName = action.optString("toolName"),
           )
         },
+        time = json.optLong("time"),
       )
     } catch (_: Exception) {
       null

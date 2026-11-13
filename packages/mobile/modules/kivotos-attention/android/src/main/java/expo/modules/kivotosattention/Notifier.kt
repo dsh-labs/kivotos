@@ -1,6 +1,7 @@
 package expo.modules.kivotosattention
 
 import android.Manifest
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -8,6 +9,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
+import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -21,6 +24,8 @@ object Notifier {
   const val CHANNEL_ATTENTION = "attention"
   const val CHANNEL_RESULTS = "results"
   const val CHANNEL_SERVICE = "service"
+  /** Live Updates: not MIN (Android never promotes a MIN channel's notification), and silent. */
+  const val CHANNEL_LIVE = "live"
   const val EXTRA_MACHINE = "kivotos.machine"
   const val EXTRA_SESSION = "kivotos.session"
   /** The approval ask a notification's buttons decide (#notification-approval). */
@@ -30,10 +35,12 @@ object Notifier {
   const val ACTION_APPROVE = "kivotos.APPROVE"
   /** Logo blue (#3478DB), the accent of expanded notifications. */
   private const val BRAND_BLUE = 0xFF3478DB.toInt()
+  /** The Live Update's tap: one request code, its extras replaced with each update. */
+  private const val LIVE_REQUEST = 7381
 
   private val zh: Boolean get() = Locale.getDefault().language == "zh"
 
-  private fun text(en: String, zhText: String) = if (zh) zhText else en
+  fun text(en: String, zhText: String) = if (zh) zhText else en
 
   fun ensureChannels(context: Context) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -62,6 +69,20 @@ object Notifier {
         setShowBadge(false)
       },
     )
+    // Only where Live Updates can exist: older Android keeps its channel list as it was.
+    if (Build.VERSION.SDK_INT < 36) return
+    manager.createNotificationChannel(
+      NotificationChannel(
+        CHANNEL_LIVE,
+        text("Live updates", "实时活动"),
+        NotificationManager.IMPORTANCE_DEFAULT,
+      ).apply {
+        description = text("What your machines are doing, in the status bar", "各台机器正在做什么，显示在状态栏")
+        setSound(null, null)
+        enableVibration(false)
+        setShowBadge(false)
+      },
+    )
   }
 
   /** The ongoing notification the foreground service must show. */
@@ -74,6 +95,61 @@ object Notifier {
       .setSilent(true)
       .setPriority(NotificationCompat.PRIORITY_MIN)
       .build()
+
+  /**
+   * The service's ongoing notification as a Live Update (Android 16 QPR1+,
+   * see [LiveUpdates]): the chip says what waits ("待确认") or how long the
+   * earliest turn has run, the card names the machine and session. The lock
+   * screen gets a version without names.
+   */
+  @RequiresApi(36)
+  fun liveNotification(context: Context, live: LiveUpdates.Content): Notification {
+    val title = if (live.title.isEmpty()) live.machineName else "${live.machineName} · ${live.title}"
+    val status = when (live.kind) {
+      LiveUpdates.Kind.APPROVAL -> text("Waiting for your approval", "等你确认")
+      LiveUpdates.Kind.QUESTION -> text("Waiting for your answer", "等你回答")
+      LiveUpdates.Kind.RUNNING -> text("Running", "正在运行")
+      LiveUpdates.Kind.FINISHED -> text("Finished", "已完成")
+      LiveUpdates.Kind.FAILED -> text("Failed", "失败")
+    }
+    val body = if (live.machines > 1) "$status · " + text("${live.machines} machines", "${live.machines} 台机器") else status
+    val chip = when (live.kind) {
+      LiveUpdates.Kind.APPROVAL -> text("Approve", "待确认")
+      LiveUpdates.Kind.QUESTION -> text("Answer", "待回答")
+      // How long the earliest turn has run, in whole minutes (the card keeps the chronometer).
+      LiveUpdates.Kind.RUNNING -> when {
+        live.minutes < 1 -> text("<1 min", "<1 分钟")
+        live.minutes < 60 -> text("${live.minutes} min", "${live.minutes} 分钟")
+        else -> text("${live.minutes / 60} h ${live.minutes % 60} min", "${live.minutes / 60} 小时 ${live.minutes % 60} 分")
+      }
+      LiveUpdates.Kind.FINISHED -> text("Done", "完成")
+      LiveUpdates.Kind.FAILED -> text("Failed", "失败")
+    }
+    fun builder(title: String) = Notification.Builder(context, CHANNEL_LIVE)
+      .setSmallIcon(R.drawable.kivotos_notification)
+      .setContentTitle(title)
+      .setContentText(body)
+      .setStyle(Notification.BigTextStyle().bigText(body))
+      .setColor(BRAND_BLUE)
+      .setOngoing(true)
+      .setOnlyAlertOnce(true)
+      .setCategory(if (live.kind == LiveUpdates.Kind.RUNNING) Notification.CATEGORY_PROGRESS else Notification.CATEGORY_STATUS)
+      .apply {
+        setShortCriticalText(chip)
+        if (live.kind == LiveUpdates.Kind.RUNNING) {
+          // A start the computer's clock puts ahead of the phone's would count down.
+          setWhen(minOf(live.since, System.currentTimeMillis())).setShowWhen(true).setUsesChronometer(true)
+        } else {
+          setShowWhen(false)
+        }
+      }
+      .addExtras(Bundle().apply { putBoolean(LiveUpdates.EXTRA_REQUEST_PROMOTED, true) })
+    return builder(title)
+      .setContentIntent(openIntent(context, live.machineId, live.sessionId, LIVE_REQUEST))
+      .setVisibility(Notification.VISIBILITY_PRIVATE)
+      .setPublicVersion(builder("Kivotos").build())
+      .build()
+  }
 
   /**
    * Post (or replace) the notification for one frame.
@@ -174,7 +250,7 @@ object Notifier {
   private fun notificationId(machineId: String, sessionId: String, key: String) =
     "$machineId|$sessionId|$key".hashCode()
 
-  private fun openIntent(context: Context, machineId: String?, sessionId: String?, requestCode: Int): PendingIntent {
+  fun openIntent(context: Context, machineId: String?, sessionId: String?, requestCode: Int): PendingIntent {
     val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
       ?: Intent().setPackage(context.packageName)
     launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)

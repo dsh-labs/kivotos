@@ -7,7 +7,7 @@ import org.json.JSONArray
  * State shared by the JS module, the service, and the boot receiver.
  *
  * Persisted values (SharedPreferences): the machines to follow, whether
- * notifications are enabled, and the last frame id seen per machine.
+ * notifications and Live Updates are enabled, and the last frame id seen per machine.
  * In-memory values: what the app is showing right now and a notification
  * tap the JS side has not consumed yet.
  */
@@ -15,6 +15,7 @@ object AttentionState {
   private const val PREFS = "kivotos.attention"
   private const val MACHINES = "machines"
   private const val ENABLED = "enabled"
+  private const val LIVE = "live"
 
   /** True while the app's activity is resumed. */
   @Volatile var appVisible = false
@@ -53,6 +54,13 @@ object AttentionState {
 
   fun setEnabled(context: Context, enabled: Boolean) {
     prefs(context).edit().putBoolean(ENABLED, enabled).apply()
+  }
+
+  /** The app's Live Updates switch (on by default). */
+  fun liveEnabled(context: Context): Boolean = prefs(context).getBoolean(LIVE, true)
+
+  fun setLiveEnabled(context: Context, enabled: Boolean) {
+    prefs(context).edit().putBoolean(LIVE, enabled).apply()
   }
 
   /** Stream cursor of a machine: the Host process epoch and the last frame id seen in it. */

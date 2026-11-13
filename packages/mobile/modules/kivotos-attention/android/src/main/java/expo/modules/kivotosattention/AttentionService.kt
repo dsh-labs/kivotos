@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import java.io.BufferedReader
@@ -21,6 +22,10 @@ import java.util.concurrent.ConcurrentHashMap
  * its Kivotos (`/kivotos/events`), over the tailnet or through a relay as the
  * machine's mode allows. Each frame becomes a system notification unless the
  * user is looking at that session.
+ *
+ * Its own ongoing notification is the Live Update ([LiveUpdates]) while a
+ * machine runs, waits or just finished and Android promotes it; otherwise it
+ * is the quiet "watching N machines" notification.
  */
 class AttentionService : Service() {
   /** One machine's stream, as it was when the worker started. */
@@ -45,18 +50,24 @@ class AttentionService : Service() {
   private val workers = ConcurrentHashMap<String, Worker>()
   private val main = Handler(Looper.getMainLooper())
   @Volatile private var stopping = false
+  /** What the ongoing notification shows now: unchanged content is not sent again. */
+  private var shown: Any? = null
+  /** Uptime of the last notification update, for [LiveUpdates.THROTTLE_MS]. */
+  private var renderedAt = 0L
+  private val render = Runnable { renderNow() }
 
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onCreate() {
     super.onCreate()
     Notifier.ensureChannels(this)
-    goForeground()
+    LiveUpdates.onChange = { scheduleRender() }
+    goForeground(force = true)
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     // Refused as a foreground service: goForeground already stopped it.
-    if (!goForeground()) return START_NOT_STICKY
+    if (!goForeground(force = true)) return START_NOT_STICKY
     reconcile()
     return START_STICKY
   }
@@ -75,15 +86,32 @@ class AttentionService : Service() {
 
   override fun onDestroy() {
     stopping = true
+    LiveUpdates.onChange = null
+    main.removeCallbacks(render)
     workers.values.forEach { it.stop() }
     workers.clear()
     connected.clear()
     super.onDestroy()
   }
 
-  /** Returns false, having stopped the service, when the system refuses the foreground start. */
-  private fun goForeground(): Boolean {
-    val notification = Notifier.serviceNotification(this, connected.size, AttentionState.machines(this).size)
+  /**
+   * Show the ongoing notification: the Live Update when there is one to show,
+   * else the service's own. Returns false, having stopped the service, when
+   * the system refuses the foreground start.
+   * @param force - call startForeground even when the content is unchanged
+   *   (each start of the service must).
+   */
+  private fun goForeground(force: Boolean): Boolean {
+    val live = if (LiveUpdates.state(this) == LiveUpdates.State.ON) LiveUpdates.content() else null
+    val connectedNow = connected.size
+    val total = AttentionState.machines(this).size
+    val content: Any = live ?: (connectedNow to total)
+    if (!force && content == shown) return true
+    val notification = if (live != null && Build.VERSION.SDK_INT >= 36) {
+      Notifier.liveNotification(this, live)
+    } else {
+      Notifier.serviceNotification(this, connectedNow, total)
+    }
     // Android 15 caps dataSync at 6 hours per day and forbids starting it from
     // BOOT_COMPLETED; specialUse (API 34+) has neither restriction. Below 14 there
     // is no such cap and dataSync is the honest type.
@@ -96,6 +124,7 @@ class AttentionService : Service() {
     }
     return try {
       ServiceCompat.startForeground(this, SERVICE_NOTIFICATION_ID, notification, type)
+      shown = content
       true
     } catch (_: Exception) {
       // ForegroundServiceStartNotAllowedException and friends: never crash the app
@@ -107,7 +136,26 @@ class AttentionService : Service() {
   }
 
   private fun refreshServiceNotification() {
-    main.post { if (!stopping) goForeground() }
+    scheduleRender()
+  }
+
+  /** Update the ongoing notification soon: at most once per [LiveUpdates.THROTTLE_MS]. */
+  private fun scheduleRender() {
+    main.post {
+      if (stopping) return@post
+      main.removeCallbacks(render)
+      val wait = renderedAt + LiveUpdates.THROTTLE_MS - SystemClock.uptimeMillis()
+      main.postDelayed(render, wait.coerceAtLeast(0))
+    }
+  }
+
+  private fun renderNow() {
+    if (stopping) return
+    renderedAt = SystemClock.uptimeMillis()
+    goForeground(force = false)
+    // A finished turn leaves, a dropped stream goes stale: render again then.
+    val next = LiveUpdates.nextExpiry() ?: return
+    main.postDelayed(render, (next - SystemClock.elapsedRealtime()).coerceAtLeast(0) + 50)
   }
 
   /**
@@ -117,6 +165,7 @@ class AttentionService : Service() {
    */
   private fun reconcile() {
     val machines = AttentionState.machines(this).associateBy { it.id }
+    LiveUpdates.retain(machines.values)
     var dropped = false
     for ((id, worker) in workers) {
       val machine = machines[id]
@@ -150,6 +199,7 @@ class AttentionService : Service() {
       }
       // Stopped: its replacement owns the machine's connected mark now.
       if (worker.stopped) return
+      LiveUpdates.dropped(machine.id)
       if (connected.remove(machine.id)) refreshServiceNotification()
       try {
         Thread.sleep(delayMs)
@@ -162,8 +212,9 @@ class AttentionService : Service() {
 
   private fun stream(worker: Worker) {
     val machine = worker.machine
-    val (epoch, after) = AttentionState.cursor(this, machine.id)
-    val query = "after=$after&epoch=" + java.net.URLEncoder.encode(epoch, "UTF-8")
+    // The whole history, every time: it rebuilds the machine's Live Update state
+    // (running turns, open waits). The cursor only tells which frames are news.
+    val query = "after=0&running=1"
     // A machine that may go over the relay is reached through its local door, which
     // wants the door's cookie and dials the preferred link first, falling back to the
     // other. A machine reached only over the tailnet is followed directly: the stream
@@ -186,15 +237,21 @@ class AttentionService : Service() {
         // Reachable again: its dsh may have restarted with new plugin batches.
         Prefetch.request(this, machine)
       }
+      LiveUpdates.connected(machine)
       BufferedReader(InputStreamReader(connection.inputStream, Charsets.UTF_8)).use { reader ->
         val data = StringBuilder()
+        var event = ""
         while (!worker.stopped) {
           val line = reader.readLine() ?: return
           when {
             line.isEmpty() -> {
-              if (data.isNotEmpty()) deliver(machine, data.toString())
+              // `live` ends the replayed history: it is the machine's state from here on.
+              if (event == "live") LiveUpdates.live(machine.id)
+              else if (data.isNotEmpty()) deliver(machine, data.toString())
               data.setLength(0)
+              event = ""
             }
+            line.startsWith("event:") -> event = line.removePrefix("event:").trim()
             line.startsWith("data:") -> {
               if (data.isNotEmpty()) data.append('\n')
               data.append(line.removePrefix("data:").trimStart())
@@ -212,8 +269,12 @@ class AttentionService : Service() {
     val frame = AttentionFrame.parse(data) ?: return
     val (epoch, last) = AttentionState.cursor(this, machine.id)
     // Ids are comparable only within one Host process (epoch).
-    if (frame.epoch == epoch && frame.id <= last) return
+    val news = frame.epoch != epoch || frame.id > last
+    LiveUpdates.fold(machine, frame, news)
+    if (!news) return
     AttentionState.setCursor(this, machine.id, frame.epoch, frame.id)
+    // Turn state is for the Live Update only.
+    if (frame.kind == "running" || frame.kind == "idle") return
     if (frame.kind == "resolved") {
       Notifier.cancel(this, machine.id, frame.sessionId, frame.key)
       AttentionState.onFrame?.let { listener -> main.post { listener(machine, frame) } }

@@ -25,6 +25,9 @@ class AttentionActivityListener : ReactActivityLifecycleListener {
   override fun onResume(activity: Activity) {
     AttentionState.appVisible = true
     Prefetch.resumed(activity)
+    // Back on the session it finished in: seen. Back from Android's settings: its promotion switch may have changed.
+    AttentionState.onScreen?.let { (machine, session) -> LiveUpdates.seen(machine, session) }
+    LiveUpdates.changed()
   }
 
   override fun onPause(activity: Activity) {

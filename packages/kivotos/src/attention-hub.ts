@@ -309,12 +309,15 @@ function parseRecord(text: string): Record<string, unknown> | undefined {
   }
 }
 
-const KINDS: Record<AttentionFrame["kind"], true> = {
+/** Kinds the board folds. The hub never asks for `running`/`idle`; a copy of one is dropped. */
+const KINDS: Record<AttentionFrame["kind"], boolean> = {
   approval: true,
   question: true,
   done: true,
   failed: true,
   resolved: true,
+  running: false,
+  idle: false,
 };
 
 /** @returns the frame, or undefined when the data is not one. */
@@ -322,8 +325,8 @@ function parseFrame(text: string): AttentionFrame | undefined {
   const value = parseRecord(text);
   if (value === undefined) return undefined;
   const { id, epoch, kind, sessionId, title, key, detail, time } = value;
-  if (typeof id !== "number" || typeof epoch !== "string" || !Object.hasOwn(KINDS, String(kind)))
-    return undefined;
+  const folded = Object.hasOwn(KINDS, String(kind)) && KINDS[kind as AttentionFrame["kind"]];
+  if (typeof id !== "number" || typeof epoch !== "string" || !folded) return undefined;
   if (typeof sessionId !== "string" || sessionId === "" || typeof key !== "string")
     return undefined;
   return {
