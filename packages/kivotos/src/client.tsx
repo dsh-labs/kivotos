@@ -569,11 +569,16 @@ function usePhoneBack(): void {
       attributes: true,
       attributeFilter: ["aria-modal", "role"],
     });
+    // A suggestions popup is a layer only while its editor has the focus.
+    document.addEventListener("focusin", report);
+    document.addEventListener("focusout", report);
     report();
     page.__kivotosBack = back;
     page.__kivotosClose = close;
     return () => {
       observer.disconnect();
+      document.removeEventListener("focusin", report);
+      document.removeEventListener("focusout", report);
       clearTimeout(pending);
       if (page.__kivotosBack === back) delete page.__kivotosBack;
       if (page.__kivotosClose === close) delete page.__kivotosClose;

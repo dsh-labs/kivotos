@@ -290,48 +290,85 @@ const SWITCHER_LIST = ".kivotos-machines-list";
 /** Every layer a phone Back may find open over the page: by ARIA, plus the switcher. */
 const LAYERS = `${P.modal}, ${P.menu}, ${SWITCHER_LIST}`;
 
-/** The page `openLayer` reads; `Document` satisfies it. */
+/**
+ * A suggestions popup (the composer's `/` and `@` triggers: ui-input-trigger
+ * renders it as a `[role=listbox]` in `conversation.input.overlay`, inside the
+ * composer seat, with no portal). dsh 0.2.2-rc.2 marks no combobox owner for
+ * it (no `aria-controls`, `aria-owns` or `aria-expanded` on the editor), so
+ * it counts as a layer only while its owner has the focus: an editor
+ * ({@link EDITOR}) in the same composer seat, whose keymap closes it on
+ * Escape. An approval card, which takes the editor's place in the seat, is
+ * never an owner.
+ */
+const LISTBOX = "[role=listbox]";
+
+/** The composer's editor (Lexical's `contenteditable` root). */
+const EDITOR = '[contenteditable="true"]';
+
+/** The page `openLayer` reads and `closeLayer` dispatches on; `Document` satisfies it. */
 export interface LayerPage {
   readonly activeElement: Element | null;
   querySelectorAll(selectors: string): ArrayLike<Element>;
+  addEventListener(type: string, listener: (event: Event) => void): void;
+  removeEventListener(type: string, listener: (event: Event) => void): void;
 }
 
 /** What a phone Back finds open over the page (`openLayer`). */
 export interface OpenLayer {
   /** The topmost layer, the one an Escape closes. */
   readonly element: Element;
+  /**
+   * Where its Escape goes: the focused element when it is inside the layer,
+   * the editor that owns a suggestions popup, else the layer itself; never
+   * the document, an approval card or the conversation outside the layer.
+   */
+  readonly target: Element;
   /** How many layers are open, the topmost included; it changes whenever one opens or closes. */
   readonly depth: number;
 }
 
 /**
  * Find what dsh shows over the page, for a phone Back to close as a native
- * app's Back would. The topmost layer is the last open menu, switcher list
- * or modal dialog in document order, the order of dsh's own modal stack
- * (`useModalLayer`); the open drawer is a modal dialog too. Nothing is open
- * when the topmost layer is one an Escape did not close (`closeLayer`): a
- * dialog only its own buttons dismiss, such as the preview notice.
+ * app's Back would. The topmost layer is the last open menu, switcher list,
+ * modal dialog or owned suggestions popup ({@link LISTBOX}) in document
+ * order, the order of dsh's own modal stack (`useModalLayer`); the open
+ * drawer is a modal dialog too. Nothing is open when the topmost layer is
+ * one an Escape did not close (`closeLayer`): a dialog only its own buttons
+ * dismiss, such as the preview notice.
  * @param page - the page dsh rendered.
  * @param kept - layers an Escape did not close; dropped once gone or no longer open.
  * @returns the open layers, or null when there is none to close.
  */
 export function openLayer(page: LayerPage, kept: Set<Element>): OpenLayer | null {
   for (const element of kept)
-    if (!element.isConnected || !element.matches(LAYERS)) kept.delete(element);
-  const layers = page.querySelectorAll(LAYERS);
-  const top = layers[layers.length - 1];
+    if (!element.isConnected || !element.matches(`${LAYERS}, ${LISTBOX}`)) kept.delete(element);
+  const focused = page.activeElement;
+  const seat = focused?.matches(EDITOR) === true ? focused.closest(P.composer) : null;
+  const layers = Array.from(page.querySelectorAll(`${LAYERS}, ${LISTBOX}`)).filter(
+    (element) =>
+      !element.matches(LISTBOX) || (seat !== null && element.closest(P.composer) === seat),
+  );
+  const top = layers.at(-1);
   if (top === undefined || kept.has(top)) return null;
-  return { element: top, depth: layers.length };
+  const target =
+    focused !== null && (top.contains(focused) || top.matches(LISTBOX)) ? focused : top;
+  return { element: top, target, depth: layers.length };
 }
 
 /**
  * Close the topmost layer with one Escape, the key dsh closes its own layers
  * on: menus take it in the capture phase, modals and the drawer in
- * `useModalLayer`, the switcher in client.tsx. The keydown and keyup go to
- * the focused element when it is inside the layer and to the layer itself
- * otherwise, so an Escape never reaches an approval card (it would reject
- * the approval) or the conversation (two stop the reply). Nothing is sent
- * when nothing is open.
+ * `useModalLayer`, a suggestions popup in the composer's keymap, the
+ * switcher in client.tsx. The keydown and keyup go to the layer's
+ * {@link OpenLayer.target}, so an Escape never reaches an approval card (it
+ * would reject the approval). Nothing is sent when nothing is open.
+ *
+ * An Escape no layer spent (`defaultPrevented`, as each of the above does)
+ * stops at the document: a one-shot bubble listener there, added after
+ * dsh's own document listeners and so run after them, keeps it from the
+ * window, where dsh's shortcut service (`dsh-client-shortcuts`, a `window`
+ * bubble `keydown`) would count it toward stopping the reply. That is the
+ * case of a modal outside dsh's Escape stack.
  * @param page - the page dsh rendered.
  * @param kept - layers an Escape did not close (`openLayer`); one more is added here.
  * @param render - runs the dispatch and renders what it changed before it
@@ -346,8 +383,6 @@ export function closeLayer(
 ): boolean {
   const layer = openLayer(page, kept);
   if (layer === null) return false;
-  const focused = page.activeElement;
-  const target = focused !== null && layer.element.contains(focused) ? focused : layer.element;
   const init = {
     key: "Escape",
     code: "Escape",
@@ -356,9 +391,20 @@ export function closeLayer(
     cancelable: true,
     composed: true,
   };
-  render(() => {
-    for (const type of ["keydown", "keyup"]) target.dispatchEvent(new KeyboardEvent(type, init));
-  });
+  const unspent = (event: Event): void => {
+    if (!event.defaultPrevented) event.stopPropagation();
+  };
+  page.addEventListener("keydown", unspent);
+  page.addEventListener("keyup", unspent);
+  try {
+    render(() => {
+      for (const type of ["keydown", "keyup"])
+        layer.target.dispatchEvent(new KeyboardEvent(type, init));
+    });
+  } finally {
+    page.removeEventListener("keydown", unspent);
+    page.removeEventListener("keyup", unspent);
+  }
   if (openLayer(page, kept)?.element !== layer.element) return true;
   kept.add(layer.element);
   return false;
