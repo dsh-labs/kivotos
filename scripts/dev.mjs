@@ -33,9 +33,14 @@ Start a relay and two dsh instances, joined to one relay network.
 
   --lab-dir DIR       where the lab lives (default: .lab in the repository)
   --relay-port N      relay port (default 7411)
+  --relay-host HOST   address the relay listens on and the invite names
+                      (default 127.0.0.1)
   --web-a-port N      machine A's dsh web port (default 7412)
   --web-b-port N      machine B's dsh web port (default 7413)
   --dsh PATH          the dsh to run (default: $DSH_BIN, else dsh on PATH)
+  --plugin DIR        the plugin package to install, already built
+                      (default: packages/kivotos of this repository)
+  --patch FILE        an extra cordis patch layer appended to the lab's own
   --keep              keep the lab directory when stopped
   -h, --help          show this help`;
 /** Marks a directory this script made, so it never deletes one it did not. */
@@ -58,9 +63,12 @@ function parseOptions() {
       options: {
         "lab-dir": { type: "string", default: path.join(repo, ".lab") },
         "relay-port": { type: "string", default: "7411" },
+        "relay-host": { type: "string", default: "127.0.0.1" },
         "web-a-port": { type: "string", default: "7412" },
         "web-b-port": { type: "string", default: "7413" },
         dsh: { type: "string", default: process.env.DSH_BIN ?? "dsh" },
+        plugin: { type: "string" },
+        patch: { type: "string" },
         keep: { type: "boolean", default: false },
         help: { type: "boolean", short: "h", default: false },
       },
@@ -253,13 +261,20 @@ async function shutdown(code, message) {
 process.on("SIGINT", () => void shutdown(130));
 process.on("SIGTERM", () => void shutdown(143));
 
-async function main() {
-  const opts = parseOptions();
-  keep = opts.keep;
-  const dsh = requirePrerequisites(opts.dsh);
-  const dir = claimLabDir(opts["lab-dir"]);
-
-  if (!existsSync(path.join(repo, "packages", "kivotos", "dist", "index.js"))) {
+/**
+ * @returns the plugin package to install: `given`, which must be built, else
+ * this repository's, built here when its dist/ is missing.
+ */
+function pluginSource(given) {
+  if (given !== undefined) {
+    const plugin = path.resolve(given);
+    if (!existsSync(path.join(plugin, "dist", "index.js"))) {
+      throw new Failure(`${plugin} has no dist/index.js; build it first`, 2);
+    }
+    return plugin;
+  }
+  const plugin = path.join(repo, "packages", "kivotos");
+  if (!existsSync(path.join(plugin, "dist", "index.js"))) {
     if (!existsSync(path.join(repo, "node_modules"))) {
       throw new Failure(`run 'npm install' in ${repo} first`);
     }
@@ -269,6 +284,16 @@ async function main() {
       shell: process.platform === "win32",
     });
   }
+  return plugin;
+}
+
+async function main() {
+  const opts = parseOptions();
+  keep = opts.keep;
+  const dsh = requirePrerequisites(opts.dsh);
+  const dir = claimLabDir(opts["lab-dir"]);
+  const plugin = pluginSource(opts.plugin);
+  const extra = opts.patch === undefined ? "" : readFileSync(opts.patch, "utf8");
 
   rmSync(dir, { recursive: true, force: true });
   labDir = dir;
@@ -288,11 +313,14 @@ async function main() {
   // Relay-only: the instances never bind a tailnet port, and nothing outside
   // this lab is mounted.
   const patch = path.join(dir, "lab.patch.yml");
-  writeFileSync(patch, "- id: kivotos\n  config:\n    listen: false\n    discover: false\n");
+  writeFileSync(
+    patch,
+    "- id: kivotos\n  config:\n    listen: false\n    discover: false\n" + extra,
+  );
 
   // The plugin's own federation module, so the invite is exactly what the
   // settings page would show.
-  const relayAddr = `127.0.0.1:${opts["relay-port"]}`;
+  const relayAddr = `${opts["relay-host"]}:${opts["relay-port"]}`;
   const network = networkOf(relayAddr);
   const membership = JSON.stringify({ relay: network.relay, secret: network.secret }, null, 2);
   for (const home of ["home-a", "home-b"]) {
@@ -313,7 +341,7 @@ async function main() {
 
   for (const home of ["home-a", "home-b"]) {
     console.log(`dev: installing the plugin into ${home}`);
-    run(dsh, ["plugin", "--profile", "web", "add", path.join(repo, "packages", "kivotos")], {
+    run(dsh, ["plugin", "--profile", "web", "add", plugin], {
       env: { ...process.env, DSH_HOME: path.join(dir, home) },
     });
   }

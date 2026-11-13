@@ -57,6 +57,14 @@ const RETRY_BURST_MS = 1000;
  * user in it.
  */
 const BACK_ANSWER_MS = 400;
+/**
+ * Whether the page can be inspected over the DevTools protocol (`chrome://inspect`,
+ * `adb forward ... localabstract:webview_devtools_remote_<pid>`), for the phone
+ * e2e (packages/mobile/e2e). Expo inlines `EXPO_PUBLIC_*` at bundle time, so only
+ * a build made with `EXPO_PUBLIC_KIVOTOS_WEBVIEW_DEBUG=1` is debuggable; a plain
+ * build never is.
+ */
+const WEBVIEW_DEBUG = process.env.EXPO_PUBLIC_KIVOTOS_WEBVIEW_DEBUG === "1";
 
 /** The page's main document did not load: the app's cover replaces it. */
 interface Failure {
@@ -443,6 +451,7 @@ export const MachineView = memo(function MachineView(props: Props) {
           allowsBackForwardNavigationGestures
           setSupportMultipleWindows={false}
           pullToRefreshEnabled
+          webviewDebuggingEnabled={WEBVIEW_DEBUG}
           style={styles.web}
         />
       </View>

@@ -1,0 +1,95 @@
+name: Phone e2e
+
+# Hardware Back on a machine's page, on an Android emulator against a fresh lab
+# (packages/mobile/e2e/phone-back.ts). Too slow for every pull request: it runs
+# nightly, by hand, and on pull requests that touch the app, the page's Back
+# handling, the lab or the e2e itself.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "40 19 * * *"
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/mobile/**"
+      - "packages/kivotos/src/client.tsx"
+      - "packages/kivotos/src/dsh/frame.ts"
+      - "scripts/dev.mjs"
+      - ".github/workflows/phone-e2e.yml"
+
+concurrency:
+  group: phone-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  phone-e2e:
+    name: phone e2e (API 35)
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      EXPO_NO_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # The lab builds the relay from packages/relay.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/relay/go.mod
+          cache-dependency-path: packages/relay/go.sum
+
+      # `dsh plugin add` runs pnpm.
+      - name: Install pnpm
+        run: npm install -g pnpm@10
+
+      # npm ci runs the plugin's prepare script, which builds dist/ for the lab.
+      - name: Install
+        run: npm ci
+
+      # The e2e installs @deepseek-ai/dsh@0.2.2-rc.2 here when it is missing.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/kivotos-e2e
+          key: kivotos-e2e-dsh-0.2.2-rc.2-${{ runner.os }}
+
+      - name: Generate native project
+        working-directory: packages/mobile
+        run: npx expo prebuild --platform android --clean --no-install
+
+      # The inspection build: only with this flag can the e2e reach the page over DevTools.
+      # The emulator is x86_64, so build that ABI only.
+      - name: Build the inspection APK
+        working-directory: packages/mobile/android
+        env:
+          EXPO_PUBLIC_KIVOTOS_WEBVIEW_DEBUG: "1"
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=x86_64
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # The relay listens on the runner's 127.0.0.1 and the e2e maps it into the
+      # emulator with adb reverse, so the invite names 127.0.0.1 on both sides.
+      - name: Run the e2e
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
+          script: npm run e2e:phone -- --apk packages/mobile/android/app/build/outputs/apk/release/app-release.apk --timeout-scale 2

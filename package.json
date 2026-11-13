@@ -39,7 +39,8 @@
     "build": "npm run build -w packages/kivotos",
     "dev": "node scripts/dev.mjs",
     "test": "npm test -w packages/kivotos && npm test -w packages/mobile",
-    "prepare": "node scripts/install-hooks.mjs"
+    "prepare": "node scripts/install-hooks.mjs",
+    "e2e:phone": "node packages/mobile/e2e/phone-back.ts"
   },
   "devDependencies": {
     "lefthook": "^2.1.6",
