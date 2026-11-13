@@ -20,7 +20,7 @@ import { performance } from "node:perf_hooks";
 import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { AttentionHub } from "./attention-hub.ts";
-import { AttentionTracker, type AttentionFrame } from "./attention.ts";
+import { AttentionTracker, isTurnState, type AttentionFrame } from "./attention.ts";
 import { ApprovalDesk } from "./approvals.ts";
 import { markImmutable, MountCache } from "./cache.ts";
 import { CompatWatch, injectCompatReport, injectHead, type CompatReport } from "./dsh/compat.ts";
@@ -688,9 +688,11 @@ export class Frontend {
       // A cursor from another Host process says nothing about this one: replay all.
       const sameEpoch = parsed.searchParams.get("epoch") === attention.epoch;
       const after = sameEpoch ? Number(parsed.searchParams.get("after") ?? "0") : 0;
+      // `running` and `idle` only for a reader that asks: an older app would banner them.
+      const turnState = parsed.searchParams.get("running") === "1";
       trace.record("sse.open", base);
       const opened = performance.now();
-      streamAttention(req, res, attention, after, (frames) =>
+      streamAttention(req, res, attention, after, turnState, (frames) =>
         trace.record("sse.close", { id, frames, durationMs: ms(performance.now() - opened) }),
       );
       return;
@@ -896,14 +898,16 @@ async function startListener(
  * Serve the attention stream as Server-Sent Events: frames after `afterId`
  * first, then a `live` event carrying the epoch, then live frames, with
  * heartbeat comments. The marker tells a reader which frames are history (a
- * Host following its peers, `attention-hub.ts`); the app parses only frame
- * data and skips it. Runs only behind a link's admission.
+ * Host following its peers, `attention-hub.ts`, and the app's live update).
+ * `running`/`idle` frames go only to a reader that asked (`turnState`).
+ * Runs only behind a link's admission.
  */
 function streamAttention(
   req: IncomingMessage,
   res: ServerResponse,
   attention: AttentionTracker,
   afterId: number,
+  turnState: boolean,
   onClose: (framesSent: number) => void,
 ): void {
   res.writeHead(200, {
@@ -914,10 +918,12 @@ function streamAttention(
   });
   let sent = 0;
   const send = (frame: AttentionFrame): void => {
+    if (!turnState && isTurnState(frame.kind)) return;
     sent += 1;
     res.write(`id: ${frame.id}\nevent: attention\ndata: ${JSON.stringify(frame)}\n\n`);
   };
-  for (const frame of attention.since(Number.isFinite(afterId) ? afterId : 0)) send(frame);
+  for (const frame of attention.since(Number.isFinite(afterId) ? afterId : 0, turnState))
+    send(frame);
   res.write(`event: live\ndata: ${JSON.stringify({ epoch: attention.epoch })}\n\n`);
   const unsubscribe = attention.subscribe(send);
   const heartbeat = setInterval(() => res.write(": ping\n\n"), HEARTBEAT_MS);
