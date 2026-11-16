@@ -74,6 +74,7 @@ export default function App() {
   const [views, setViews] = useState<LiveView[]>([]);
   const [notifications, setNotifications] = useState<NotificationState>("off");
   const [batteryRestricted, setBatteryRestricted] = useState(false);
+  const [liveUpdates, setLiveUpdates] = useState<Attention.LiveUpdates>("unsupported");
   const [banner, setBanner] = useState<Attention.Attention | null>(null);
   const [screen, setScreen] = useState<Screen>("machines");
   const [probe, setProbe] = useState<PhoneProbe | null>(null);
@@ -181,6 +182,11 @@ export default function App() {
     void restore();
     setNotifications(Attention.isEnabled() ? "on" : "off");
     setBatteryRestricted(Attention.isBatteryRestricted());
+    setLiveUpdates(Attention.liveUpdates());
+    // Android's Live Updates setting may change while the app is away.
+    const offActive = AppState.addEventListener("change", (state) => {
+      if (state === "active") setLiveUpdates(Attention.liveUpdates());
+    });
     const offOpen = Attention.onOpenSession(({ machineId, sessionId }) =>
       openSession(machineId, sessionId),
     );
@@ -195,6 +201,7 @@ export default function App() {
       offOpen();
       offAttention();
       offMemory();
+      offActive.remove();
     };
   }, [dropHidden, openSession, persist]);
 
@@ -213,6 +220,11 @@ export default function App() {
     setNotifications("on");
     setBatteryRestricted(Attention.isBatteryRestricted());
   }, [notifications]);
+
+  const toggleLiveUpdates = useCallback(() => {
+    Attention.setLiveUpdates(liveUpdates !== "on");
+    setLiveUpdates(Attention.liveUpdates());
+  }, [liveUpdates]);
 
   /**
    * A page's Session changed or its page was shown again; only the page on
@@ -453,6 +465,9 @@ export default function App() {
             probe={probe}
             notifications={notifications}
             batteryRestricted={batteryRestricted}
+            liveUpdates={liveUpdates}
+            onToggleLiveUpdates={toggleLiveUpdates}
+            onFixLiveUpdates={Attention.openLiveUpdateSettings}
             onAdd={addMachines}
             onRemove={removeMachine}
             onMode={changeMode}
